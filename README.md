@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Feature Flag 与灰度规则平台
 
 轻量 Feature Flag 平台（滴滴外包岗笔试题目 A）：React + Go + PostgreSQL。
@@ -104,3 +105,7 @@ README.md
 
 - **本阶段（M0）目标**：脚手架可运行（进行中，待评审）
 - **整题未完成**：Flag 管理验收、规则、评估控制台、历史事务、完整 README 语义定稿、AI 过程记录定稿等均待各阶段门禁通过后交付
+=======
+# feature-flag-and-grayscale-rule-platform
+一个轻量 Feature Flag 平台，按「环境 + Key」管理开关，用有序规则根据用户属性求值，并把配置变更连同操作历史原子写入 PostgreSQL。
+>>>>>>> fab0e89a2ce7e722c1a5f8db02c50448fd286f4d
