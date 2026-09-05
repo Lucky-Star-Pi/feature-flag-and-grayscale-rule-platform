@@ -659,6 +659,7 @@ SetFlagEnabled：version=version+1，WHERE 仅 id。
 - 已设 `TEST_DATABASE_URL`：`go test ./... -count=1` → `ok db / eval / http / service`（含乐观锁 ①～④）。
 - 未设：http 集成 SKIP，不红。
 - `npm run build`、`npm run lint` 通过。
+- **人工评审：M6 已通过。**
 
 ---
 
@@ -694,8 +695,7 @@ Postgres：Docker Compose，宿主机 **5433**。
 
 ## 4. 阶段状态
 
-- [x] M0–M5 人工评审通过
-- [ ] M6 配置版本 + 乐观锁（通过口令：`M6 通过`）
+- [x] M0–M6 人工评审通过
 - [x] 关键踩坑：Gin `:id`/`:flagId` 冲突；Postgres 未启动导致集成测试失败
 
 ## 5. 需人工补齐清单（不代填虚构内容）

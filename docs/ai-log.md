@@ -77,7 +77,7 @@
 
 ---
 
-## M6 配置版本 + 乐观锁
+## M6 配置版本 + 乐观锁 — 已通过
 
 ### 提示词要求
 
@@ -111,3 +111,7 @@ npm run lint
 - 既有 `TestUpdateEnableHistorySummary`、`TestRulesCRUD_AndDetailOrder` 的 PATCH 必须带 `version`，否则 400。
 - `TestNotFound` 的 PATCH 也要带 `version`，否则在 GetFlag 之前就因「version 必填」变成 400，测不到 404。
 - 若把 `old.Version` 写入 WHERE，陈旧客户端 version 永远对得上，乐观锁形同虚设。
+
+### 人工评审
+
+**已通过**（口令：`M6 通过`）
