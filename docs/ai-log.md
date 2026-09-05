@@ -1,36 +1,41 @@
 # AI 辅助开发过程记录
 
-## 门禁说明
+## 门禁
 
-按用户要求：**分阶段开发，每阶段评测 + 人工评审通过后才能进入下一阶段**。
+分阶段开发；每阶段评测 + 人工评审通过后才能进入下一阶段。
 
 ---
 
-## M0 脚手架（进行中 / 待评审）
+## M0 脚手架 — 已通过
 
-### 我问了 AI 什么
+- Go 装到 `D:\Tools\go`；Postgres Compose 映射 **5433**（避开本机 5432）
+- `/health` 冒烟通过
 
-- 按需求分析从零搭建 Feature Flag 平台
-- 本机无 Go、Docker 守护进程曾未启动、5432 被其他容器占用时如何落地
+---
 
-### AI / 环境做了什么
+## M1 骨架 + 数据模型 — 待评审
 
-- 将 Go 1.22 安装到 `D:\Tools\go`
-- 启动 Docker Desktop；Postgres 映射到 **5433**（避开本机已有 `agent-postgres` 占用的 5432）
-- 创建 `docker-compose.yml`、`backend/`、`frontend/`、迁移 SQL、README 启动说明
+### 我问了 AI / 提示词要求
 
-### 我（流程）做了什么决策 / 修正
+- 只做 M1：骨架、迁移三表、DB 工具、前端占位、healthz 测试
+- **不要**提前实现完整 CRUD
+- `UNIQUE(key, environment)` 必须落在 DB；事务与 23505 映射先封装给 M2
 
-- **新增强制规则**：每阶段必须评测 + 人工评审通过才能进下一阶段
-- 提前写出的后续阶段草稿**不视为已完成**；当前只提交 M0 验收
-- 默认 `DATABASE_URL` 端口改为 5433
+### 做了什么
 
-### 验证（M0）
+- 按 M1 提示词**收敛范围**：删除提前写的 service/store/eval/完整 handlers 与前端 API 页
+- 迁移对齐表名：`flags` / `rules` / `history`（`flag_id` 可空）
+- 新增 `config`、`db.WithTx`、`db.MapUniqueViolation`、`/healthz` + 单测
+- 前端改为三占位页
 
-- `featureflag-pg` healthy，`pg_isready` 成功
-- `GET http://127.0.0.1:8080/health` → `{"status":"ok"}`
-- 前端 `npm run build`（修完 type-only import 后）应通过
+### 验证命令
+
+```text
+go test ./internal/http/ ./internal/db/ -count=1
+GET /healthz
+docker exec ... psql 检查 UNIQUE 与 seed
+```
 
 ### 待人工确认
 
-请评审 M0 后回复：`M0 通过，进入 M1`
+回复：`M1 通过，进入 M2`

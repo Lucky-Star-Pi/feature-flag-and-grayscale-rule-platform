@@ -1,3 +1,3 @@
-DELETE FROM operation_histories;
-DELETE FROM flag_rules;
-DELETE FROM flags WHERE key IN ('checkout_v2', 'dark_mode');
+DELETE FROM history;
+DELETE FROM rules;
+DELETE FROM flags WHERE key = 'checkout_v2';

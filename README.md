@@ -1,111 +1,122 @@
-<<<<<<< HEAD
 # Feature Flag 与灰度规则平台
 
 轻量 Feature Flag 平台（滴滴外包岗笔试题目 A）：React + Go + PostgreSQL。
 
-## 开发门禁（强制）
+## 开发门禁
 
-**按阶段开发**：每个里程碑结束后必须完成「自动化评测 + 人工评审」通过后，才能进入下一阶段。未获评审通过不得继续实现后续功能。
+**按阶段开发**：每阶段「自动化评测 + 人工评审」通过后，才能进入下一阶段。
 
-| 阶段 | 内容 | 本阶段评测 | 状态 |
-|------|------|------------|------|
-| **M0** | 脚手架：Postgres、Go 服务可启动、Vite 前端可启动、README 启动命令 | 见下方「M0 评测清单」 | **待人工评审** |
-| M1 | flags 表 UNIQUE + CRUD/409 | 集成测试 | 未开始（待 M0 通过） |
-| M2 | eval 纯函数单测 | `go test ./internal/eval` | 未开始（待门禁） |
-| M3 | POST /evaluate | 接口错误码 | 未开始 |
-| M4 | 规则 CRUD + history 同事务 | 集成测试 | 未开始 |
-| M5 | 启停与编辑 | 停用恒 false | 未开始 |
-| M6 | 四页前端调真实 API | 手测主路径 | 未开始 |
-| M7 | README 定稿 + AI 过程记录 | 文档齐套 | 未开始 |
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| M0 | 脚手架可启动 | **已通过** |
+| **M1** | 骨架 + 三表迁移 + DB 工具 + 前端占位 + healthz 测试 | **待人工评审** |
+| M2 | Flag/规则 CRUD + 历史同事务（待门禁） | 未开始 |
 
-> 说明：仓库内可能已有后续阶段草稿文件；**在 M0 人工评审通过前，不以这些草稿作为「已完成」交付**，下一阶段以评审结论为准再继续。
+## 技术选型（M1）
 
-## 已锁定的关键业务决策（全文一致）
-
-- 优先级：数字越小越先匹配（`ORDER BY priority ASC, id ASC`）
-- 重复优先级：拒绝（400 / DB UNIQUE）
-- 停用：`enabled=false` 时恒返回 `false`，不评估规则
-- 固定操作者：`local-admin`
-
-## 技术栈
-
-- 后端：Go、Gin、sqlx、pgx、golang-migrate、testify
-- 前端：Vite、React、TypeScript、Ant Design、TanStack Query、React Router
-- 数据库：PostgreSQL 16（Docker Compose，宿主机端口 **5433**，避免与本机已有 5432 冲突）
-
-## 启动方式（M0）
-
-### 0. 环境变量建议
-
-```powershell
-$env:PATH = "D:\Tools\go\bin;D:\nodejs;" + $env:PATH
-$env:GOROOT = "D:\Tools\go"
-$env:GOPATH = "D:\Tools\gopath"
-$env:GOPROXY = "https://goproxy.cn,direct"
-```
-
-### 1. 启动 PostgreSQL
-
-```powershell
-cd "D:\桌面\陈凯昊项目提交（滴滴）"
-$env:COMPOSE_PROJECT_NAME = "featureflag"
-docker compose -p featureflag up -d
-docker exec featureflag-pg pg_isready -U flaguser -d featureflag
-```
-
-连接串：
-
-```text
-postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable
-```
-
-### 2. 启动后端
-
-```powershell
-cd "D:\桌面\陈凯昊项目提交（滴滴）\backend"
-$env:DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
-$env:MIGRATIONS_PATH = "file://migrations"
-$env:HTTP_ADDR = ":8080"
-go run ./cmd/server
-```
-
-健康检查：`GET http://127.0.0.1:8080/health` → `{"status":"ok"}`
-
-### 3. 启动前端
-
-```powershell
-cd "D:\桌面\陈凯昊项目提交（滴滴）\frontend"
-npm install
-npm run dev
-```
-
-浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。开发代理：`/api` → `:8080`。
-
-## M0 评测清单（请人工勾选）
-
-- [ ] `docker compose up -d` 后容器 `featureflag-pg` 为 healthy，`pg_isready` 成功
-- [ ] `go run ./cmd/server` 能启动，迁移成功打印 version
-- [ ] `GET /health` 返回 ok
-- [ ] `npm run dev` 前端可打开，无构建错误
-- [ ] README 启动命令可按本机路径复现
-
-**请确认 M0 通过后，回复「M0 通过，进入 M1」**，再开始 M1 开发与评测。
+- HTTP：**Gin**（生态成熟、测试用 `httptest` 方便、与国内评卷环境熟悉）
+- DB：`sqlx` + `pgx` stdlib；迁移：`golang-migrate`
+- 前端：Vite + React + TS + React Router + Ant Design（仅占位页）
 
 ## 目录结构
 
 ```text
-backend/          Go API
-frontend/         React 应用
-docker-compose.yml
-docs/             过程记录与阶段说明
+backend/
+  cmd/server/main.go
+  internal/
+    config/          # 环境变量
+    db/              # 连接、WithTx、MapUniqueViolation
+    http/            # /healthz + 单测
+    migrateutil/     # 迁移封装
+  migrations/
+    0001_init.up.sql / .down.sql
+    0002_seed.up.sql / .down.sql
+frontend/
+  src/pages/         # 列表/详情/评估占位
+docker-compose.yml   # Postgres 宿主机端口 5433
+docs/
 README.md
 ```
 
-## 已完成 / 未完成（相对整题）
+## 数据模型要点（M1）
 
-- **本阶段（M0）目标**：脚手架可运行（进行中，待评审）
-- **整题未完成**：Flag 管理验收、规则、评估控制台、历史事务、完整 README 语义定稿、AI 过程记录定稿等均待各阶段门禁通过后交付
-=======
-# feature-flag-and-grayscale-rule-platform
-一个轻量 Feature Flag 平台，按「环境 + Key」管理开关，用有序规则根据用户属性求值，并把配置变更连同操作历史原子写入 PostgreSQL。
->>>>>>> fab0e89a2ce7e722c1a5f8db02c50448fd286f4d
+- `flags`：`UNIQUE (key, environment)` —— **数据库层**保证同环境 Key 唯一
+- `rules`：`UNIQUE (flag_id, priority)` —— 重复优先级 **拒绝**（DB 兜底；应用层 400 在 M2）
+- `history`：`flag_id` 可空 FK；字段 `operation_type` / `operator` / `summary`
+
+## 启动命令
+
+```powershell
+# 0. 环境
+$env:PATH = "D:\Tools\go\bin;D:\nodejs;" + $env:PATH
+$env:GOROOT = "D:\Tools\go"
+$env:GOPATH = "D:\Tools\gopath"
+$env:GOPROXY = "https://goproxy.cn,direct"
+
+# 1. Postgres
+cd "D:\桌面\陈凯昊项目提交（滴滴）"
+$env:COMPOSE_PROJECT_NAME = "featureflag"
+docker compose -p featureflag up -d
+docker exec featureflag-pg pg_isready -U flaguser -d featureflag
+
+# 2. 后端（自动 migrate + /healthz）
+cd backend
+$env:DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
+$env:MIGRATIONS_PATH = "file://migrations"
+$env:HTTP_ADDR = ":8080"
+go run ./cmd/server
+
+# 3. 前端
+cd ..\frontend
+npm install
+npm run dev
+```
+
+验证：
+
+- `GET http://127.0.0.1:8080/healthz` → `{"status":"ok"}`
+- 浏览器打开 Vite 地址，可访问列表/详情/评估占位页
+
+## M1 测试命令
+
+```powershell
+cd "D:\桌面\陈凯昊项目提交（滴滴）\backend"
+$env:GOPROXY = "https://goproxy.cn,direct"
+go test ./internal/http/ ./internal/db/ -count=1
+```
+
+可选：检查种子与唯一约束（需 psql 或 docker exec）：
+
+```powershell
+docker exec -i featureflag-pg psql -U flaguser -d featureflag -c "\d+ flags"
+docker exec -i featureflag-pg psql -U flaguser -d featureflag -c "SELECT key, environment FROM flags;"
+docker exec -i featureflag-pg psql -U flaguser -d featureflag -c "INSERT INTO flags(name,key,environment,enabled,default_value) VALUES ('x','checkout_v2','development',true,false);"
+# 期望：ERROR unique violation on flags_key_environment_uk
+```
+
+## 后续集成测试说明（本阶段不做完整实现）
+
+M2+ 将用**真 PostgreSQL**（`TEST_DATABASE_URL`，可选 Docker）验证：
+
+1. 同环境重复 Key → 23505 → 业务冲突
+2. 不同环境同 Key 允许
+3. `WithTx`：业务写 + history 任一失败整体回滚
+
+本阶段不引入 testcontainers，避免 Windows/无 Docker 场景评卷失败。
+
+## M1 评测清单（请人工勾选）
+
+- [ ] 迁移后存在 `flags` / `rules` / `history`，且 `flags` 有 `UNIQUE (key, environment)`
+- [ ] seed 有 demo 数据；同环境重复 Key 插入失败
+- [ ] `go test ./internal/http/ ./internal/db/` 通过
+- [ ] `/healthz` 返回 ok；前端三占位页可访问
+- [ ] 仓库中**无**完整 Flag CRUD API（留给 M2）
+
+**通过后请回复：`M1 通过，进入 M2`**
+
+## 下一步 M2（先说明，本阶段不实现）
+
+- Flag 列表/新建/编辑/启停 API + 与 history 同事务
+- 规则增删改 + 重复 priority 应用层 400
+- 把 23505 映射为 HTTP 409
+- 集成测试覆盖唯一约束与事务回滚

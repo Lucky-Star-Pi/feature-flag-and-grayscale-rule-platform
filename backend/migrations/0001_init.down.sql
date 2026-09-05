@@ -1,3 +1,3 @@
-DROP TABLE IF EXISTS operation_histories;
-DROP TABLE IF EXISTS flag_rules;
+DROP TABLE IF EXISTS history;
+DROP TABLE IF EXISTS rules;
 DROP TABLE IF EXISTS flags;
