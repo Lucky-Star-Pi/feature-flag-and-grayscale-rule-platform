@@ -17,7 +17,7 @@ import {
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { getErrorMessage, type Environment, type Flag } from '../types'
+import { ApiError, getErrorMessage, type Environment, type Flag } from '../types'
 
 const envOptions = [
   { value: 'development', label: 'development' },
@@ -70,13 +70,20 @@ export default function FlagListPage() {
   })
 
   const updateMut = useMutation({
-    mutationFn: ({ id, values }: { id: number; values: EditValues }) => api.updateFlag(id, values),
+    mutationFn: ({ id, values, version }: { id: number; values: EditValues; version: number }) =>
+      api.updateFlag(id, { ...values, version }),
     onSuccess: () => {
       message.success('已更新')
       setEditing(null)
       invalidate()
     },
-    onError: (e: unknown) => message.error(getErrorMessage(e)),
+    onError: (e: unknown) => {
+      message.error(getErrorMessage(e))
+      if (e instanceof ApiError && e.code === 'VERSION_CONFLICT') {
+        setEditing(null)
+        qc.invalidateQueries({ queryKey: ['flags'] })
+      }
+    },
   })
 
   const toggleMut = useMutation({
@@ -90,6 +97,7 @@ export default function FlagListPage() {
   })
 
   const openEdit = (row: Flag) => {
+    // 记录打开瞬间的 version 快照；提交时用它做乐观锁，禁止改成「提交前再 GET」。
     setEditing(row)
     editForm.setFieldsValue({ name: row.name, defaultValue: row.defaultValue })
   }
@@ -242,7 +250,7 @@ export default function FlagListPage() {
         <Form
           form={editForm}
           layout="vertical"
-          onFinish={(values) => editing && updateMut.mutate({ id: editing.id, values })}
+          onFinish={(values) => editing && updateMut.mutate({ id: editing.id, values, version: editing.version })}
         >
           <Form.Item name="name" label="名称" rules={[{ required: true, max: 100 }]}>
             <Input />

@@ -201,7 +201,7 @@ func TestUpdateEnableHistorySummary(t *testing.T) {
 	id := created.Flag.ID
 
 	pw := doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d", id), map[string]any{
-		"name": "NewName", "defaultValue": true,
+		"name": "NewName", "defaultValue": true, "version": created.Flag.Version,
 	})
 	require.Equal(t, http.StatusOK, pw.Code, pw.Body.String())
 
@@ -240,7 +240,7 @@ func TestNotFound(t *testing.T) {
 	require.Equal(t, "NOT_FOUND", er.Error.Code)
 
 	w = doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d", missing), map[string]any{
-		"name": "x", "defaultValue": false,
+		"name": "x", "defaultValue": false, "version": int64(1),
 	})
 	require.Equal(t, http.StatusNotFound, w.Code)
 
@@ -299,7 +299,7 @@ func TestRulesCRUD_AndDetailOrder(t *testing.T) {
 
 	uw := doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d/rules/%d", id, rule0.Rule.ID), map[string]any{
 		"attribute": "country", "operator": "equals", "expectedValue": "US",
-		"returnValue": false, "priority": 0,
+		"returnValue": false, "priority": 0, "version": rule0.Rule.Version,
 	})
 	require.Equal(t, http.StatusOK, uw.Code, uw.Body.String())
 
@@ -403,6 +403,164 @@ func TestEvaluate_InvalidInput(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, badJSON.Code, badJSON.Body.String())
 	require.NoError(t, json.Unmarshal(badJSON.Body.Bytes(), &er))
 	require.Equal(t, "INVALID_INPUT", er.Error.Code)
+}
+
+func TestFlagOptimisticLock_StaleVersion_409_NoHistory(t *testing.T) {
+	r, database := setupAPI(t)
+	w := doJSON(t, r, http.MethodPost, "/api/v1/flags", map[string]any{
+		"name": "OL", "key": uniqueKey("olflag"), "environment": "development", "defaultValue": false,
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	require.Equal(t, int64(1), created.Flag.Version)
+	id := created.Flag.ID
+
+	ok := doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d", id), map[string]any{
+		"name": "OL2", "defaultValue": true, "version": int64(1),
+	})
+	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+	var updated struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(ok.Body.Bytes(), &updated))
+	require.Equal(t, int64(2), updated.Flag.Version)
+
+	before, err := store.ListHistory(context.Background(), database.SQL, id)
+	require.NoError(t, err)
+
+	stale := doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d", id), map[string]any{
+		"name": "OL3", "defaultValue": false, "version": int64(1),
+	})
+	require.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	var er errResp
+	require.NoError(t, json.Unmarshal(stale.Body.Bytes(), &er))
+	require.Equal(t, "VERSION_CONFLICT", er.Error.Code)
+	require.Equal(t, "数据已被他人修改，请刷新后重试", er.Error.Message)
+
+	after, err := store.ListHistory(context.Background(), database.SQL, id)
+	require.NoError(t, err)
+	require.Equal(t, len(before), len(after), "乐观锁冲突不得写入 history")
+}
+
+func TestRuleOptimisticLock_StaleVersion_409_NoHistory(t *testing.T) {
+	r, database := setupAPI(t)
+	w := doJSON(t, r, http.MethodPost, "/api/v1/flags", map[string]any{
+		"name": "OLR", "key": uniqueKey("olrule"), "environment": "development", "defaultValue": false,
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	flagID := created.Flag.ID
+
+	cw := doJSON(t, r, http.MethodPost, fmt.Sprintf("/api/v1/flags/%d/rules", flagID), map[string]any{
+		"attribute": "country", "operator": "equals", "expectedValue": "CN",
+		"returnValue": true, "priority": 0,
+	})
+	require.Equal(t, http.StatusCreated, cw.Code, cw.Body.String())
+	var createdRule struct {
+		Rule model.Rule `json:"rule"`
+	}
+	require.NoError(t, json.Unmarshal(cw.Body.Bytes(), &createdRule))
+	require.Equal(t, int64(1), createdRule.Rule.Version)
+	ruleID := createdRule.Rule.ID
+
+	ok := doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d/rules/%d", flagID, ruleID), map[string]any{
+		"attribute": "country", "operator": "equals", "expectedValue": "US",
+		"returnValue": false, "priority": 0, "version": int64(1),
+	})
+	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+	var updated struct {
+		Rule model.Rule `json:"rule"`
+	}
+	require.NoError(t, json.Unmarshal(ok.Body.Bytes(), &updated))
+	require.Equal(t, int64(2), updated.Rule.Version)
+
+	before, err := store.ListHistory(context.Background(), database.SQL, flagID)
+	require.NoError(t, err)
+
+	stale := doJSON(t, r, http.MethodPatch, fmt.Sprintf("/api/v1/flags/%d/rules/%d", flagID, ruleID), map[string]any{
+		"attribute": "country", "operator": "equals", "expectedValue": "JP",
+		"returnValue": true, "priority": 0, "version": int64(1),
+	})
+	require.Equal(t, http.StatusConflict, stale.Code, stale.Body.String())
+	var er errResp
+	require.NoError(t, json.Unmarshal(stale.Body.Bytes(), &er))
+	require.Equal(t, "VERSION_CONFLICT", er.Error.Code)
+	require.Equal(t, "数据已被他人修改，请刷新后重试", er.Error.Message)
+
+	after, err := store.ListHistory(context.Background(), database.SQL, flagID)
+	require.NoError(t, err)
+	require.Equal(t, len(before), len(after), "规则乐观锁冲突不得写入 history")
+}
+
+func TestEnableDisable_BumpsVersion_NoOptimisticCheck(t *testing.T) {
+	r, _ := setupAPI(t)
+	w := doJSON(t, r, http.MethodPost, "/api/v1/flags", map[string]any{
+		"name": "EN", "key": uniqueKey("enver"), "environment": "development", "defaultValue": false,
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	require.Equal(t, int64(1), created.Flag.Version)
+	id := created.Flag.ID
+
+	dw := doJSON(t, r, http.MethodPost, fmt.Sprintf("/api/v1/flags/%d/disable", id), nil)
+	require.Equal(t, http.StatusOK, dw.Code, dw.Body.String())
+	var disabled struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(dw.Body.Bytes(), &disabled))
+	require.False(t, disabled.Flag.Enabled)
+	require.Equal(t, int64(2), disabled.Flag.Version)
+
+	ew := doJSON(t, r, http.MethodPost, fmt.Sprintf("/api/v1/flags/%d/enable", id), nil)
+	require.Equal(t, http.StatusOK, ew.Code, ew.Body.String())
+	var enabled struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(ew.Body.Bytes(), &enabled))
+	require.True(t, enabled.Flag.Enabled)
+	require.Equal(t, int64(3), enabled.Flag.Version)
+}
+
+func TestGetFlagDetail_ReturnsVersions(t *testing.T) {
+	r, _ := setupAPI(t)
+	w := doJSON(t, r, http.MethodPost, "/api/v1/flags", map[string]any{
+		"name": "DV", "key": uniqueKey("detailver"), "environment": "development", "defaultValue": true,
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		Flag model.Flag `json:"flag"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	id := created.Flag.ID
+
+	cw := doJSON(t, r, http.MethodPost, fmt.Sprintf("/api/v1/flags/%d/rules", id), map[string]any{
+		"attribute": "plan", "operator": "equals", "expectedValue": "pro",
+		"returnValue": true, "priority": 1,
+	})
+	require.Equal(t, http.StatusCreated, cw.Code, cw.Body.String())
+	var createdRule struct {
+		Rule model.Rule `json:"rule"`
+	}
+	require.NoError(t, json.Unmarshal(cw.Body.Bytes(), &createdRule))
+
+	detail := doJSON(t, r, http.MethodGet, fmt.Sprintf("/api/v1/flags/%d", id), nil)
+	require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
+	var d service.FlagDetail
+	require.NoError(t, json.Unmarshal(detail.Body.Bytes(), &d))
+	require.NotZero(t, d.Flag.Version)
+	require.Equal(t, created.Flag.Version, d.Flag.Version)
+	require.Len(t, d.Rules, 1)
+	require.NotZero(t, d.Rules[0].Version)
+	require.Equal(t, createdRule.Rule.Version, d.Rules[0].Version)
 }
 
 func doRaw(t *testing.T, r http.Handler, body string) *httptest.ResponseRecorder {

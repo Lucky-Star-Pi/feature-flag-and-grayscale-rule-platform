@@ -74,3 +74,40 @@
 ### 待人工确认
 
 回复：`M5 通过，可提交`
+
+---
+
+## M6 配置版本 + 乐观锁
+
+### 提示词要求
+
+- 唯一可选扩展：配置版本 + 乐观锁；禁止百分比灰度/登录/拖拽/前端 E2E
+- 不改评估逻辑与既有业务语义
+- `flags`/`rules` 加 `version`；编辑必须带客户端快照；启停只 bump 不校验
+- `WHERE version=?` 绝不能用服务端刚读的 `old.Version`
+
+### 实现要点
+
+- 迁移 `0003_add_version`（启动 `migrate.Up` 自动 apply）
+- store：UpdateFlag/UpdateRule 用客户端 version；0 行 → `db.ErrVersionConflict` → 409 `VERSION_CONFLICT`「数据已被他人修改，请刷新后重试」
+- SetFlagEnabled：`version=version+1`，WHERE 仅 `id`
+- 前端编辑 Modal 打开时记录 `row.version`，PATCH 带上；409 则提示并 invalidateQueries
+
+### 验证命令
+
+```powershell
+cd backend
+$env:TEST_DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
+go test ./... -count=1
+# 不连库：不要设置 TEST_DATABASE_URL
+go test ./internal/eval/ ./internal/db/ ./internal/service/ ./internal/http/ -count=1
+cd ..\frontend
+npm run build
+npm run lint
+```
+
+### 踩坑记录
+
+- 既有 `TestUpdateEnableHistorySummary`、`TestRulesCRUD_AndDetailOrder` 的 PATCH 必须带 `version`，否则 400。
+- `TestNotFound` 的 PATCH 也要带 `version`，否则在 GetFlag 之前就因「version 必填」变成 400，测不到 404。
+- 若把 `old.Version` 写入 WHERE，陈旧客户端 version 永远对得上，乐观锁形同虚设。

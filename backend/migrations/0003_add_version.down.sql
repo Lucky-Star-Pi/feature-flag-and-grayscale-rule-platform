@@ -1,0 +1,2 @@
+ALTER TABLE flags DROP COLUMN version;
+ALTER TABLE rules DROP COLUMN version;

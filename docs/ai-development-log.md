@@ -633,6 +633,35 @@ git 拆分：feat(M3) 评估、feat(M4) 前端、docs(M5) 文档。
 
 ---
 
+### 阶段 8：M6 配置版本 + 乐观锁
+
+**我的提问**
+```text
+只做 M6（可选扩展，唯一一个）：配置版本 + 乐观锁。
+禁止其它扩展；禁止改评估逻辑。WHERE version 必须用客户端快照，绝不能用 old.Version。
+启停只 bump 不校验。409 VERSION_CONFLICT「数据已被他人修改，请刷新后重试」。
+```
+
+**AI 输出（节选）**
+```text
+0003_add_version 给 flags/rules 加 version DEFAULT 1。
+UpdateFlag/UpdateRule：WHERE id AND version=$客户端；0 行 → ErrVersionConflict。
+SetFlagEnabled：version=version+1，WHERE 仅 id。
+前端编辑打开时记下 row.version，PATCH 带上；409 则 invalidateQueries。
+```
+
+**我的决策与踩坑**
+- 既有 PATCH 集成测试必须带 version，否则 400；NotFound 的 PATCH 也要带，否则测不到 404。
+- 回滚不做：乐观锁 ≠ 历史版本恢复。
+
+**结果验证**（2026-09-05 本机真跑）
+- `gofmt -l .` 空；`go build ./...`、`go vet ./...` 通过。
+- 已设 `TEST_DATABASE_URL`：`go test ./... -count=1` → `ok db / eval / http / service`（含乐观锁 ①～④）。
+- 未设：http 集成 SKIP，不红。
+- `npm run build`、`npm run lint` 通过。
+
+---
+
 ## 3. 操作日志（旁证）
 
 ### git 提交记录
@@ -642,16 +671,17 @@ git 拆分：feat(M3) 评估、feat(M4) 前端、docs(M5) 文档。
 ### 关键命令与测试输出（节选）
 
 ```text
-# M5 全量（backend，已设 TEST_DATABASE_URL）
-ok  	featureflag/internal/db	0.357s
-ok  	featureflag/internal/eval	0.344s
-ok  	featureflag/internal/http	2.145s
-ok  	featureflag/internal/service	0.323s
+# M6 全量（backend，已设 TEST_DATABASE_URL）
+ok  	featureflag/internal/db	0.381s
+ok  	featureflag/internal/eval	0.358s
+ok  	featureflag/internal/http	3.326s
+ok  	featureflag/internal/service	0.365s
 
 # 未设 TEST_DATABASE_URL
---- SKIP: TestDuplicateKeySameEnv_409_NoHistory
-    api_int_test.go:85: TEST_DATABASE_URL 未设置，跳过集成测试
-（其余集成用例同样 SKIP；TestHealthz PASS）
+ok  	featureflag/internal/eval
+ok  	featureflag/internal/db
+ok  	featureflag/internal/service
+ok  	featureflag/internal/http
 
 # 前端
 npm run build → tsc -b && vite build  exit 0
@@ -664,8 +694,8 @@ Postgres：Docker Compose，宿主机 **5433**。
 
 ## 4. 阶段状态
 
-- [x] M0–M4 人工评审通过
-- [ ] M5 收尾验收（通过口令：`M5 通过，可提交`）
+- [x] M0–M5 人工评审通过
+- [ ] M6 配置版本 + 乐观锁（通过口令：`M6 通过`）
 - [x] 关键踩坑：Gin `:id`/`:flagId` 冲突；Postgres 未启动导致集成测试失败
 
 ## 5. 需人工补齐清单（不代填虚构内容）

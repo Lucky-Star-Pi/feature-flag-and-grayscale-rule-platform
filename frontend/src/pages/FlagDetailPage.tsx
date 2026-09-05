@@ -20,7 +20,7 @@ import {
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, isJsonStringArray } from '../api'
-import { getErrorMessage, type Operator, type Rule } from '../types'
+import { ApiError, getErrorMessage, type Operator, type Rule } from '../types'
 
 type RuleForm = {
   attribute: string
@@ -74,7 +74,7 @@ export default function FlagDetailPage() {
         returnValue: values.returnValue,
         priority: values.priority,
       }
-      if (editing) return api.updateRule(flagId, editing.id, body)
+      if (editing) return api.updateRule(flagId, editing.id, { ...body, version: editing.version })
       return api.createRule(flagId, body)
     },
     onSuccess: () => {
@@ -84,7 +84,15 @@ export default function FlagDetailPage() {
       form.resetFields()
       invalidate()
     },
-    onError: (e: unknown) => message.error(getErrorMessage(e)),
+    onError: (e: unknown) => {
+      message.error(getErrorMessage(e))
+      if (e instanceof ApiError && e.code === 'VERSION_CONFLICT') {
+        setOpen(false)
+        setEditing(null)
+        qc.invalidateQueries({ queryKey: ['flag', flagId] })
+        qc.invalidateQueries({ queryKey: ['history', flagId] })
+      }
+    },
   })
 
   const deleteMut = useMutation({
@@ -104,6 +112,7 @@ export default function FlagDetailPage() {
   }
 
   const openEdit = (r: Rule) => {
+    // 记录打开瞬间的 version 快照，PATCH body 带该值。
     setEditing(r)
     form.setFieldsValue({
       attribute: r.attribute,

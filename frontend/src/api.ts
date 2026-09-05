@@ -44,7 +44,7 @@ export const api = {
     defaultValue: boolean
   }) => apiFetch<{ flag: Flag }>('/api/v1/flags', { method: 'POST', body: JSON.stringify(body) }),
 
-  updateFlag: (id: number, body: { name: string; defaultValue: boolean }) =>
+  updateFlag: (id: number, body: { name: string; defaultValue: boolean; version: number }) =>
     apiFetch<{ flag: Flag }>(`/api/v1/flags/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   enableFlag: (id: number) =>
@@ -77,6 +77,7 @@ export const api = {
       expectedValue: string
       returnValue: boolean
       priority: number
+      version: number
     },
   ) =>
     apiFetch<{ rule: Rule }>(`/api/v1/flags/${flagId}/rules/${ruleId}`, {

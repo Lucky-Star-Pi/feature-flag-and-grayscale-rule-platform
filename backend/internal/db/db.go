@@ -14,9 +14,11 @@ import (
 // 业务冲突错误（由 HTTP 层集中映射）：
 //   - ErrFlagKeyConflict      → 409 KEY_CONFLICT
 //   - ErrRulePriorityConflict → 400 PRIORITY_CONFLICT（重复优先级视为输入错误，非 409）
+//   - ErrVersionConflict      → 409 VERSION_CONFLICT（编辑乐观锁未命中）
 var (
 	ErrFlagKeyConflict      = errors.New("flag key conflict in same environment")
 	ErrRulePriorityConflict = errors.New("rule priority conflict for same flag")
+	ErrVersionConflict      = errors.New("concurrent modification: version mismatch")
 )
 
 // DB 包装 sqlx，供 M2 CRUD 使用。

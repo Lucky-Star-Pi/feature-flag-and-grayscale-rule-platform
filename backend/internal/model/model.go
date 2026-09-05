@@ -19,26 +19,30 @@ const (
 )
 
 type Flag struct {
-	ID           int64     `db:"id" json:"id"`
-	Name         string    `db:"name" json:"name"`
-	Key          string    `db:"key" json:"key"`
-	Environment  string    `db:"environment" json:"environment"`
-	Enabled      bool      `db:"enabled" json:"enabled"`
-	DefaultValue bool      `db:"default_value" json:"defaultValue"`
-	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
-	UpdatedAt    time.Time `db:"updated_at" json:"updatedAt"`
+	ID           int64  `db:"id" json:"id"`
+	Name         string `db:"name" json:"name"`
+	Key          string `db:"key" json:"key"`
+	Environment  string `db:"environment" json:"environment"`
+	Enabled      bool   `db:"enabled" json:"enabled"`
+	DefaultValue bool   `db:"default_value" json:"defaultValue"`
+	// Version 乐观锁版本，初始为 1；编辑必须带客户端快照，不可用服务端刚读到的值。
+	Version   int64     `db:"version" json:"version"`
+	CreatedAt time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type Rule struct {
-	ID            int64     `db:"id" json:"id"`
-	FlagID        int64     `db:"flag_id" json:"flagId"`
-	Attribute     string    `db:"attribute" json:"attribute"`
-	Operator      string    `db:"operator" json:"operator"`
-	ExpectedValue string    `db:"expected_value" json:"expectedValue"`
-	ReturnValue   bool      `db:"return_value" json:"returnValue"`
-	Priority      int       `db:"priority" json:"priority"`
-	CreatedAt     time.Time `db:"created_at" json:"createdAt"`
-	UpdatedAt     time.Time `db:"updated_at" json:"updatedAt"`
+	ID            int64  `db:"id" json:"id"`
+	FlagID        int64  `db:"flag_id" json:"flagId"`
+	Attribute     string `db:"attribute" json:"attribute"`
+	Operator      string `db:"operator" json:"operator"`
+	ExpectedValue string `db:"expected_value" json:"expectedValue"`
+	ReturnValue   bool   `db:"return_value" json:"returnValue"`
+	Priority      int    `db:"priority" json:"priority"`
+	// Version 乐观锁版本，初始为 1；UPDATE 的 WHERE version 必须用客户端请求值。
+	Version   int64     `db:"version" json:"version"`
+	CreatedAt time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type History struct {

@@ -64,6 +64,10 @@ func writeError(c *gin.Context, err error) {
 		body.Error.Code = "KEY_CONFLICT"
 		body.Error.Message = "该环境下 Key 已存在"
 		c.JSON(http.StatusConflict, body)
+	case errors.Is(err, db.ErrVersionConflict):
+		body.Error.Code = "VERSION_CONFLICT"
+		body.Error.Message = "数据已被他人修改，请刷新后重试"
+		c.JSON(http.StatusConflict, body)
 	case errors.Is(err, db.ErrRulePriorityConflict):
 		body.Error.Code = "PRIORITY_CONFLICT"
 		body.Error.Message = "同一 Flag 内优先级不可重复（数字越小优先级越高）"

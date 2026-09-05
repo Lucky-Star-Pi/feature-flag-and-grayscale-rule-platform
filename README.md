@@ -11,7 +11,8 @@
 | M2 | Flag/规则 CRUD + 历史同事务 + 真库集成测试 | **已通过** |
 | M3 | 规则评估纯函数 + `POST /api/v1/evaluate` | **已通过** |
 | M4 | 前端对接真实 Go API | **已通过** |
-| **M5** | 提交前自查、文档与 git 整理、全量验收 | **待人工确认** |
+| M5 | 提交前自查、文档与 git 整理、全量验收 | **已通过** |
+| **M6** | 配置版本 + 乐观锁（唯一可选扩展） | **待人工确认** |
 
 ## 启动方式
 
@@ -28,7 +29,7 @@ cd "D:\桌面\陈凯昊项目提交（滴滴）"
 $env:COMPOSE_PROJECT_NAME = "featureflag"
 docker compose -p featureflag up -d
 
-# 2. 后端（启动时自动 migrate + seed）
+# 2. 后端（启动时自动 migrate，含 0003 version 列）
 cd backend
 $env:DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
 $env:MIGRATIONS_PATH = "file://migrations"
@@ -67,6 +68,7 @@ go test ./... -count=1
 - **同环境 Key 唯一**：DB `UNIQUE(key, environment)`，23505 → `409 KEY_CONFLICT`。
 - **历史**：写操作与 history 同一 `WithTx`；操作者固定 `local-admin`。
 - **评估**：停用 → `reason=disabled` 恒 false；首条命中 → `matched`；否则 `default`。equals 精确字符串化比较；`in` 解析 JSON 字符串数组，失败或 `[]` 跳过；属性缺失 / null / 对象 / 数组跳过。
+- **乐观锁**：编辑 Flag/规则必须带客户端看到的 `version`；`WHERE version=?` 用该快照，**禁止**用服务端刚读到的值。启停只 bump、不校验。冲突 → `409 VERSION_CONFLICT`「数据已被他人修改，请刷新后重试」。
 
 ## 设计取舍
 
@@ -79,11 +81,13 @@ go test ./... -count=1
 - **集成测试不用 testcontainers**：`TEST_DATABASE_URL` + 未设置则 `t.Skip`，避免 Windows/评卷机无 Docker 时整套变红。
 - **HTTP 用 Gin、DB 用 sqlx 显式 SQL**：事务边界和 UNIQUE 错误对评卷人可见；不用 GORM 隐藏 SQL。
 - **前端只走相对路径 `/api/v1`**：开发靠 Vite proxy，不写死后端地址。
+- **乐观锁只锁编辑，启停不校验版本**：UpdateFlag / UpdateRule 必须带客户端快照 `version`，UPDATE 用 `WHERE ... AND version=$客户端version`，影响 0 行 → `409 VERSION_CONFLICT`。启用/停用是单布尔幂等切换，只 `version=version+1`，last-write-wins。铁律：`WHERE version=?` **绝不能**用服务端 `GetFlag/GetRule` 刚读到的 `old.Version`（那是「读后立刻写」，锁永远匹配）；`old` 只用于历史摘要。
+- **回滚 ≠ 乐观锁**：本扩展只防并发覆盖并递增版本号，不做历史版本恢复/一键回滚。
 
 ## 数据模型（摘要）
 
-- `flags`：`UNIQUE(key, environment)`
-- `rules`：`UNIQUE(flag_id, priority)`；`flag_id` CASCADE
+- `flags`：`UNIQUE(key, environment)`；`version BIGINT NOT NULL DEFAULT 1`
+- `rules`：`UNIQUE(flag_id, priority)`；`flag_id` CASCADE；同样有 `version`
 - `history`：`flag_id` 可空 SET NULL；`operation_type` / `operator` / `summary`
 
 ## API 契约（摘要）
@@ -95,7 +99,7 @@ Base `/api/v1`，错误体 `{"error":{"code","message"}}`。
 - 历史：`GET /flags/:id/history`
 - 评估：`POST /evaluate` → `{value, matched, matchedRule, reason}`，`reason` ∈ `disabled|matched|default`
 
-错误码：`KEY_CONFLICT` 409、`PRIORITY_CONFLICT` 400、`NOT_FOUND` 404（评估文案「Flag 不存在」）、`INVALID_INPUT` 400。
+错误码：`KEY_CONFLICT` 409、`VERSION_CONFLICT` 409（「数据已被他人修改，请刷新后重试」）、`PRIORITY_CONFLICT` 400、`NOT_FOUND` 404（评估文案「Flag 不存在」）、`INVALID_INPUT` 400。
 
 ## 前端页面
 
@@ -112,6 +116,7 @@ Base `/api/v1`，错误体 `{"error":{"code","message"}}`。
 - 数据库迁移 + seed；同环境 Key 唯一落在 DB
 - 评估核心逻辑自动化测试 + 真库集成测试（唯一约束、事务、评估接口）
 - 前端对接真实 API（loading / 空状态 / 错误反馈）
+- 配置版本 + 乐观锁：编辑带客户端 `version`；启停只 bump；冲突 409 并刷新列表/详情
 
 ## 未完成
 
@@ -119,7 +124,7 @@ Base `/api/v1`，错误体 `{"error":{"code","message"}}`。
 
 - 登录与角色权限
 - 稳定百分比灰度
-- 配置版本 / 回滚 / 乐观锁
+- 配置回滚（回滚 ≠ 乐观锁：乐观锁只防并发覆盖，不恢复历史版本）
 - 规则拖拽排序
 - 环境间配置复制或发布
 - 前端自动化测试或在线部署
@@ -128,7 +133,7 @@ Base `/api/v1`，错误体 `{"error":{"code","message"}}`。
 
 - 无登录/角色权限（题面明确不要求）
 - 列表无分页（演示数据量可接受）
-- 无配置版本/回滚/乐观锁、无百分比灰度、无环境间复制（见未完成）
+- 无配置回滚、无百分比灰度、无环境间复制（见未完成）
 - 前端无自动化测试（可选扩展未做）
 - 评估每次实时查库、无缓存（量小可接受）
 - 启动需分步命令 + 本机 Docker 起 Postgres（未做一键 Compose 含前后端；题面不强制 Docker）

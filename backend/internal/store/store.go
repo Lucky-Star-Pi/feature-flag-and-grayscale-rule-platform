@@ -14,8 +14,8 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
-const flagColumns = `id, name, key, environment, enabled, default_value, created_at, updated_at`
-const ruleColumns = `id, flag_id, attribute, operator, expected_value, return_value, priority, created_at, updated_at`
+const flagColumns = `id, name, key, environment, enabled, default_value, version, created_at, updated_at`
+const ruleColumns = `id, flag_id, attribute, operator, expected_value, return_value, priority, version, created_at, updated_at`
 const historyColumns = `id, flag_id, operation_type, operator, summary, created_at`
 
 type FlagFilter struct {
@@ -87,24 +87,27 @@ func CreateFlag(ctx context.Context, tx *sqlx.Tx, f *model.Flag) error {
 	return db.MapUniqueViolation(err)
 }
 
-func UpdateFlag(ctx context.Context, tx *sqlx.Tx, id int64, name string, defaultValue bool) (*model.Flag, error) {
+// UpdateFlag 编辑 Flag：WHERE version 必须用客户端请求里的 expectedVersion，
+// 绝不能用服务端刚 GetFlag 读到的 old.Version，否则锁形同虚设。
+func UpdateFlag(ctx context.Context, tx *sqlx.Tx, id int64, name string, defaultValue bool, expectedVersion int64) (*model.Flag, error) {
 	var f model.Flag
 	err := tx.QueryRowxContext(ctx, `
-		UPDATE flags SET name=$1, default_value=$2, updated_at=NOW()
-		WHERE id=$3
+		UPDATE flags SET name=$1, default_value=$2, version=version+1, updated_at=NOW()
+		WHERE id=$3 AND version=$4
 		RETURNING `+flagColumns,
-		name, defaultValue, id,
+		name, defaultValue, id, expectedVersion,
 	).StructScan(&f)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, db.ErrVersionConflict
 	}
 	return &f, db.MapUniqueViolation(err)
 }
 
+// SetFlagEnabled 启停只 bump version，WHERE 不含 version（last-write-wins，不做乐观锁）。
 func SetFlagEnabled(ctx context.Context, tx *sqlx.Tx, id int64, enabled bool) (*model.Flag, error) {
 	var f model.Flag
 	err := tx.QueryRowxContext(ctx, `
-		UPDATE flags SET enabled=$1, updated_at=NOW()
+		UPDATE flags SET enabled=$1, version=version+1, updated_at=NOW()
 		WHERE id=$2
 		RETURNING `+flagColumns,
 		enabled, id,
@@ -162,16 +165,17 @@ func CreateRule(ctx context.Context, tx *sqlx.Tx, r *model.Rule) error {
 	return db.MapUniqueViolation(err)
 }
 
+// UpdateRule 编辑规则：WHERE version 用 r.Version（客户端快照），禁止换成服务端刚读的 old.Version。
 func UpdateRule(ctx context.Context, tx *sqlx.Tx, r *model.Rule) error {
 	err := tx.QueryRowxContext(ctx, `
 		UPDATE rules
-		SET attribute=$1, operator=$2, expected_value=$3, return_value=$4, priority=$5, updated_at=NOW()
-		WHERE id=$6 AND flag_id=$7
+		SET attribute=$1, operator=$2, expected_value=$3, return_value=$4, priority=$5, version=version+1, updated_at=NOW()
+		WHERE id=$6 AND flag_id=$7 AND version=$8
 		RETURNING `+ruleColumns,
-		r.Attribute, r.Operator, r.ExpectedValue, r.ReturnValue, r.Priority, r.ID, r.FlagID,
+		r.Attribute, r.Operator, r.ExpectedValue, r.ReturnValue, r.Priority, r.ID, r.FlagID, r.Version,
 	).StructScan(r)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
+		return db.ErrVersionConflict
 	}
 	return db.MapUniqueViolation(err)
 }

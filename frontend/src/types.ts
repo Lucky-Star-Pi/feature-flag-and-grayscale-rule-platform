@@ -9,6 +9,7 @@ export type Flag = {
   environment: Environment
   enabled: boolean
   defaultValue: boolean
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -21,6 +22,7 @@ export type Rule = {
   expectedValue: string
   returnValue: boolean
   priority: number
+  version: number
   createdAt: string
   updatedAt: string
 }
@@ -57,6 +59,7 @@ export function getErrorMessage(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.code === 'KEY_CONFLICT') return '该环境下 Key 已存在'
     if (e.code === 'PRIORITY_CONFLICT') return '同一 Flag 内优先级不可重复'
+    if (e.code === 'VERSION_CONFLICT') return '数据已被他人修改，请刷新后重试'
     return e.message || e.code
   }
   if (e instanceof Error) return e.message

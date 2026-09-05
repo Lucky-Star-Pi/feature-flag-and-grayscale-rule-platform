@@ -59,6 +59,7 @@ type CreateFlagInput struct {
 type UpdateFlagInput struct {
 	Name         string `json:"name"`
 	DefaultValue *bool  `json:"defaultValue"`
+	Version      *int64 `json:"version"` // 客户端看到的 version，乐观锁用；不可用服务端最新读替代
 }
 
 type RuleInput struct {
@@ -67,6 +68,7 @@ type RuleInput struct {
 	ExpectedValue string `json:"expectedValue"`
 	ReturnValue   *bool  `json:"returnValue"`
 	Priority      *int   `json:"priority"`
+	Version       *int64 `json:"version"` // 仅 UpdateRule 必填；CreateRule 忽略
 }
 
 type FlagDetail struct {
@@ -156,6 +158,9 @@ func (s *Service) UpdateFlag(ctx context.Context, id int64, in UpdateFlagInput) 
 	if in.DefaultValue == nil {
 		return nil, fmt.Errorf("%w: defaultValue 必填", ErrInvalidInput)
 	}
+	if in.Version == nil {
+		return nil, fmt.Errorf("%w: version 必填", ErrInvalidInput)
+	}
 	old, err := store.GetFlag(ctx, s.DB.SQL, id)
 	if err != nil {
 		return nil, mapStoreErr(err)
@@ -164,7 +169,8 @@ func (s *Service) UpdateFlag(ctx context.Context, id int64, in UpdateFlagInput) 
 	var updated *model.Flag
 	err = s.DB.WithTx(ctx, func(tx *sqlx.Tx) error {
 		var txErr error
-		updated, txErr = store.UpdateFlag(ctx, tx, id, name, *in.DefaultValue)
+		// expectedVersion 必须来自请求体 in.Version，禁止传 old.Version。
+		updated, txErr = store.UpdateFlag(ctx, tx, id, name, *in.DefaultValue, *in.Version)
 		if txErr != nil {
 			return mapStoreErr(txErr)
 		}
@@ -307,6 +313,9 @@ func (s *Service) UpdateRule(ctx context.Context, flagID, ruleID int64, in RuleI
 	if err != nil {
 		return nil, err
 	}
+	if in.Version == nil {
+		return nil, fmt.Errorf("%w: version 必填", ErrInvalidInput)
+	}
 	old, err := store.GetRule(ctx, s.DB.SQL, flagID, ruleID)
 	if err != nil {
 		return nil, mapStoreErr(err)
@@ -329,6 +338,7 @@ func (s *Service) UpdateRule(ctx context.Context, flagID, ruleID int64, in RuleI
 			ExpectedValue: expected,
 			ReturnValue:   ret,
 			Priority:      priority,
+			Version:       *in.Version, // 客户端快照，供 store WHERE version=? 使用
 		}
 		if e := store.UpdateRule(ctx, tx, &updated); e != nil {
 			return mapStoreErr(e)
