@@ -4,9 +4,9 @@ import "os"
 
 // Config 由环境变量加载，便于本地与测试复用。
 type Config struct {
-	HTTPAddr        string
-	DatabaseURL     string
-	MigrationsPath  string
+	HTTPAddr       string
+	DatabaseURL    string
+	MigrationsPath string
 }
 
 func Load() Config {

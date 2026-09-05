@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -39,6 +40,7 @@ func NewRouter(svc *service.Service) *gin.Engine {
 			api.POST("/flags/:id/rules", h.CreateRule)
 			api.PATCH("/flags/:id/rules/:ruleId", h.UpdateRule)
 			api.DELETE("/flags/:id/rules/:ruleId", h.DeleteRule)
+			api.POST("/evaluate", h.Evaluate)
 		}
 	}
 	return r
@@ -66,6 +68,10 @@ func writeError(c *gin.Context, err error) {
 		body.Error.Code = "PRIORITY_CONFLICT"
 		body.Error.Message = "同一 Flag 内优先级不可重复（数字越小优先级越高）"
 		c.JSON(http.StatusBadRequest, body)
+	case errors.Is(err, service.ErrFlagNotFound):
+		body.Error.Code = "NOT_FOUND"
+		body.Error.Message = "Flag 不存在"
+		c.JSON(http.StatusNotFound, body)
 	case errors.Is(err, service.ErrNotFound):
 		body.Error.Code = "NOT_FOUND"
 		body.Error.Message = "资源不存在"
@@ -255,4 +261,41 @@ func (h *Handler) DeleteRule(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) Evaluate(c *gin.Context) {
+	var raw json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
+		writeError(c, fmt.Errorf("%w: JSON 格式错误", service.ErrInvalidInput))
+		return
+	}
+	var envelope struct {
+		Key         string          `json:"key"`
+		Environment string          `json:"environment"`
+		Attributes  json.RawMessage `json:"attributes"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		writeError(c, fmt.Errorf("%w: JSON 格式错误", service.ErrInvalidInput))
+		return
+	}
+	attrs := map[string]any{}
+	if len(envelope.Attributes) > 0 {
+		trimmed := strings.TrimSpace(string(envelope.Attributes))
+		if trimmed != "" && trimmed != "null" {
+			if trimmed[0] != '{' {
+				writeError(c, fmt.Errorf("%w: attributes 必须是 JSON 对象", service.ErrInvalidInput))
+				return
+			}
+			if err := json.Unmarshal(envelope.Attributes, &attrs); err != nil || attrs == nil {
+				writeError(c, fmt.Errorf("%w: attributes 必须是 JSON 对象", service.ErrInvalidInput))
+				return
+			}
+		}
+	}
+	res, err := h.Svc.Evaluate(c.Request.Context(), envelope.Key, envelope.Environment, attrs)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }

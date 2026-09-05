@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"featureflag/internal/db"
+	"featureflag/internal/eval"
 	"featureflag/internal/model"
 	"featureflag/internal/store"
 
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	ErrNotFound      = errors.New("not found")
-	ErrInvalidInput  = errors.New("invalid input")
+	ErrNotFound     = errors.New("not found")
+	ErrInvalidInput = errors.New("invalid input")
+	ErrFlagNotFound = errors.New("flag not found")
 )
 
 type Service struct {
@@ -368,4 +370,28 @@ func (s *Service) DeleteRule(ctx context.Context, flagID, ruleID int64) error {
 		}
 		return store.InsertHistory(ctx, tx, h)
 	})
+}
+
+func (s *Service) Evaluate(ctx context.Context, key, env string, attrs map[string]any) (*eval.Result, error) {
+	key = strings.TrimSpace(key)
+	env = strings.TrimSpace(env)
+	if key == "" {
+		return nil, fmt.Errorf("%w: key 必填", ErrInvalidInput)
+	}
+	if !ValidEnvironment(env) {
+		return nil, fmt.Errorf("%w: environment 必须是 development/staging/production", ErrInvalidInput)
+	}
+	f, err := store.GetFlagByKeyAndEnv(ctx, s.DB.SQL, key, env)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, ErrFlagNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	rules, err := store.ListRules(ctx, s.DB.SQL, f.ID)
+	if err != nil {
+		return nil, err
+	}
+	res := eval.Evaluate(*f, rules, attrs)
+	return &res, nil
 }

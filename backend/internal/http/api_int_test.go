@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,4 +327,89 @@ func TestRulesCRUD_AndDetailOrder(t *testing.T) {
 	require.True(t, ops[model.OpCreateRule])
 	require.True(t, ops[model.OpUpdateRule])
 	require.True(t, ops[model.OpDeleteRule])
+}
+
+func TestEvaluate_SeedHitAndDefault(t *testing.T) {
+	r, _ := setupAPI(t)
+
+	hit := doJSON(t, r, http.MethodPost, "/api/v1/evaluate", map[string]any{
+		"key": "checkout_v2", "environment": "development",
+		"attributes": map[string]any{"country": "CN"},
+	})
+	require.Equal(t, http.StatusOK, hit.Code, hit.Body.String())
+	var hitBody struct {
+		Value       bool        `json:"value"`
+		Matched     bool        `json:"matched"`
+		MatchedRule *model.Rule `json:"matchedRule"`
+		Reason      string      `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(hit.Body.Bytes(), &hitBody))
+	require.True(t, hitBody.Value)
+	require.True(t, hitBody.Matched)
+	require.NotNil(t, hitBody.MatchedRule)
+	require.Equal(t, "matched", hitBody.Reason)
+	require.Equal(t, "country", hitBody.MatchedRule.Attribute)
+
+	def := doJSON(t, r, http.MethodPost, "/api/v1/evaluate", map[string]any{
+		"key": "checkout_v2", "environment": "development",
+		"attributes": map[string]any{"country": "US", "plan": "free"},
+	})
+	require.Equal(t, http.StatusOK, def.Code, def.Body.String())
+	var defBody struct {
+		Value       bool        `json:"value"`
+		Matched     bool        `json:"matched"`
+		MatchedRule *model.Rule `json:"matchedRule"`
+		Reason      string      `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(def.Body.Bytes(), &defBody))
+	require.False(t, defBody.Value)
+	require.False(t, defBody.Matched)
+	require.Nil(t, defBody.MatchedRule)
+	require.Equal(t, "default", defBody.Reason)
+}
+
+func TestEvaluate_FlagNotFound(t *testing.T) {
+	r, _ := setupAPI(t)
+	w := doJSON(t, r, http.MethodPost, "/api/v1/evaluate", map[string]any{
+		"key": "no_such_flag", "environment": "development",
+		"attributes": map[string]any{},
+	})
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	var er errResp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &er))
+	require.Equal(t, "NOT_FOUND", er.Error.Code)
+	require.Equal(t, "Flag 不存在", er.Error.Message)
+}
+
+func TestEvaluate_InvalidInput(t *testing.T) {
+	r, _ := setupAPI(t)
+
+	badEnv := doJSON(t, r, http.MethodPost, "/api/v1/evaluate", map[string]any{
+		"key": "checkout_v2", "environment": "prod",
+		"attributes": map[string]any{},
+	})
+	require.Equal(t, http.StatusBadRequest, badEnv.Code, badEnv.Body.String())
+	var er errResp
+	require.NoError(t, json.Unmarshal(badEnv.Body.Bytes(), &er))
+	require.Equal(t, "INVALID_INPUT", er.Error.Code)
+
+	attrArr := doRaw(t, r, `{"key":"checkout_v2","environment":"development","attributes":["CN"]}`)
+	require.Equal(t, http.StatusBadRequest, attrArr.Code, attrArr.Body.String())
+	require.NoError(t, json.Unmarshal(attrArr.Body.Bytes(), &er))
+	require.Equal(t, "INVALID_INPUT", er.Error.Code)
+	require.Contains(t, er.Error.Message, "attributes 必须是 JSON 对象")
+
+	badJSON := doRaw(t, r, `{not-json`)
+	require.Equal(t, http.StatusBadRequest, badJSON.Code, badJSON.Body.String())
+	require.NoError(t, json.Unmarshal(badJSON.Body.Bytes(), &er))
+	require.Equal(t, "INVALID_INPUT", er.Error.Code)
+}
+
+func doRaw(t *testing.T, r http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluate", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
 }
