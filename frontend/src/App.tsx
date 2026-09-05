@@ -8,7 +8,11 @@ import FlagDetailPage from './pages/FlagDetailPage'
 import FlagListPage from './pages/FlagListPage'
 import './index.css'
 
-const qc = new QueryClient()
+const qc = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false, refetchOnWindowFocus: false },
+  },
+})
 
 export default function App() {
   return (
