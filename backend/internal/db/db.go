@@ -11,7 +11,9 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// 业务冲突错误（HTTP 层可映射为 409）。
+// 业务冲突错误（由 HTTP 层集中映射）：
+//   - ErrFlagKeyConflict      → 409 KEY_CONFLICT
+//   - ErrRulePriorityConflict → 400 PRIORITY_CONFLICT（重复优先级视为输入错误，非 409）
 var (
 	ErrFlagKeyConflict      = errors.New("flag key conflict in same environment")
 	ErrRulePriorityConflict = errors.New("rule priority conflict for same flag")

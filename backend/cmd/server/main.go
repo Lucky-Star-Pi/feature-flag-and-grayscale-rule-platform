@@ -9,6 +9,7 @@ import (
 	"featureflag/internal/db"
 	httpapi "featureflag/internal/http"
 	"featureflag/internal/migrateutil"
+	"featureflag/internal/service"
 )
 
 func main() {
@@ -30,8 +31,9 @@ func main() {
 		log.Fatalf("db ping: %v", err)
 	}
 
-	r := httpapi.NewRouter()
-	log.Printf("M1 server listening on %s (healthz=/healthz)", cfg.HTTPAddr)
+	svc := service.New(database)
+	r := httpapi.NewRouter(svc)
+	log.Printf("M2 server listening on %s (healthz=/healthz api=/api/v1)", cfg.HTTPAddr)
 	if err := r.Run(cfg.HTTPAddr); err != nil {
 		log.Fatal(err)
 	}
