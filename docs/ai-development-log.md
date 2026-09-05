@@ -157,7 +157,18 @@ Flag 列表页、新建/编辑页、Flag 详情与规则管理页、评估控制
 
 **AI 输出（节选）**
 ```text
-（粘贴需求分析文档的关键结论：数据模型、评估语义、优先级策略、一致性设计等）
+需求分析定稿结论（非原始全文，由 README「已锁定语义 / 设计取舍」与现有代码反推）：
+
+- 优先级：数字越小越高；评估与规则列表均为 priority ASC, id ASC。
+- 重复优先级：拒绝 → 400 PRIORITY_CONFLICT；应用层先拦，DB UNIQUE(flag_id, priority) 兜底。
+- 停用短路：enabled=false 恒返回 false，不评估任何规则（reason=disabled）。
+- 匹配：equals 为字符串化后精确相等；in 的 expectedValue 解析 JSON 字符串数组，失败或 [] 跳过；
+  属性缺失 / null / 对象 / 数组跳过；number 用 FormatFloat、bool 为 "true"/"false"。
+- 一致性：同环境 Key 唯一只信任 DB UNIQUE(key, environment)，INSERT 捕获 23505 → 409 KEY_CONFLICT；
+  写操作与 history 同一事务；评估做成 internal/eval 纯函数便于单测。
+- 技术栈：Gin + sqlx/pgx + golang-migrate；Vite + React + TS + antd + TanStack Query。
+
+完整原始输出见当时 Plan / 聊天记录，此处为最终定稿结论。
 ```
 
 **我的决策与踩坑**
@@ -622,7 +633,7 @@ git 拆分：feat(M3) 评估、feat(M4) 前端、docs(M5) 文档。
 
 **我的决策与踩坑**
 - 不做百分比灰度等可选扩展，只在「未完成/已知限制」如实列出。
-- 过程文档里仍有早期占位句（如需求分析「AI 输出节选」未贴全文），**不虚构补全**，见文末「需人工补齐清单」。
+- 需求分析「AI 输出」占位已用可验证的定稿结论摘要替代（不虚构原始全文）。
 
 **结果验证**（2026-09-05 本机真跑，非虚构）
 - `gofmt -w` 后 `gofmt -l .` 为空；`go build ./...`、`go vet ./...` 通过。
@@ -702,6 +713,6 @@ Postgres：Docker Compose，宿主机 **5433**。
 
 以下条目在 `ai-development-log.md` 中仍偏摘要或占位，评卷若要求「原始对话全文」，请人工从 Cursor 聊天记录粘贴，**不要编造**：
 
-- [ ] 阶段 1「AI 输出（节选）」仍是占位句，未贴需求分析全文（全文在当时 Plan 中）
+- [x] 阶段 1 占位已用定稿结论摘要替代
 - [ ] 各阶段完整原始 prompt 可再从聊天导出备份到 `docs/chats/`（当前已有精简版）
 - [x] M5 全量验收命令输出已写入本节「操作日志」（2026-09-05 真跑）

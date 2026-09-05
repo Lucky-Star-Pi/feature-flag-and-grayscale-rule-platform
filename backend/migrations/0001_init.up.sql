@@ -1,6 +1,6 @@
 -- M1: 数据模型
 -- 重复优先级「拒绝」策略：本表 UNIQUE(flag_id, priority) 在数据库层兜底；
--- 应用层（M2）创建/更新规则前亦可先校验并返回 400 DUPLICATE_PRIORITY。
+-- 应用层（M2）创建/更新规则前亦可先校验并返回 400 PRIORITY_CONFLICT。
 
 CREATE TABLE IF NOT EXISTS flags (
     id              BIGSERIAL PRIMARY KEY,

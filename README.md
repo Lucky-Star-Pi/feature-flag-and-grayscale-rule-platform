@@ -16,7 +16,9 @@
 
 ## 启动方式
 
-少量分步命令即可本地复现（题面不强制 Docker 一键）：
+少量分步命令即可本地复现（题面不强制 Docker 一键）。
+
+下面 PATH / GOROOT / GOPATH 是作者 Windows 本机示例；若 Go、Node 已加入 PATH 可直接省略这几行，请按本机实际安装路径替换。`GOPROXY` 仅大陆网络加速用，非必需。宿主机端口 **5433** 是因为本机 5432 已被占用；若改端口，须同步改 `docker-compose.yml` 的 `ports` 以及 `DATABASE_URL` / `TEST_DATABASE_URL`。
 
 ```powershell
 $env:PATH = "D:\Tools\go\bin;D:\nodejs;" + $env:PATH
