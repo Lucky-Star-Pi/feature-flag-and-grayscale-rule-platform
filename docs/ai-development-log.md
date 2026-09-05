@@ -10,10 +10,10 @@
 
 本记录与以下文件/证据一并提交，供交叉印证：
 
-- [ ] 本文件 `docs/ai-development-log.md`（对话节选 + 决策 + 结果）
-- [ ] `git log` 提交记录（见文末「操作日志」）
-- [ ] 关键命令与测试运行输出（见文末「操作日志」）
-- [ ] 关键 bug 的修复前后对照（见各阶段「踩坑与修正」小节）
+- [x] 本文件 `docs/ai-development-log.md`（对话节选 + 决策 + 结果）
+- [x] `git log` 提交记录（M5 三次提交后见操作日志）
+- [x] 关键命令与测试运行输出（见操作日志；以本轮终端为准）
+- [x] 关键 bug：Gin 路由冲突、Postgres 未启动（见各阶段踩坑）
 
 ---
 
@@ -232,13 +232,43 @@ M0阶段已完成人工校验，请按以下提示词进行开发：
 
 **AI 输出（节选）**
 ```text
-（建表 SQL / 迁移脚本关键片段，特别是 UNIQUE(key, environment)）
+M1 已交付，停在人工评审门禁
+已按你的 M1 提示词收敛范围：只做骨架 + 迁移 + DB 工具 + 前端占位 + 最小测试；已删除提前写的完整 CRUD / eval / 业务 API。
+
+交付摘要
+项	说明
+HTTP
+Gin；仅 GET /healthz
+迁移
+flags / rules / history；UNIQUE(key, environment)；种子 2 个 Flag + 规则
+重复 priority
+DB：UNIQUE(flag_id, priority) 拒绝；应用层 400 留给 M2
+DB 工具
+db.Open、WithTx、MapUniqueViolation(23505)
+前端
+列表 / 详情 / 评估三页占位，可启动
+测试
+healthz + MapUniqueViolation 单测通过
+已跑通的验证
+go test ./internal/http/ ./internal/db/ -count=1   # ok
+GET /healthz → {"status":"ok"}
+flags 存在 UNIQUE CONSTRAINT flags_key_environment_uk
+同环境重复插入 checkout_v2@development → 23505 拒绝
+npm run build → 通过
+关键路径
+迁移：backend/migrations/0001_init.up.sql
+DB 工具：backend/internal/db/db.go
+启动与评测清单：README.md
+下一步 M2（本阶段不实现）
+Flag/规则 CRUD、history 同事务、23505→HTTP 409、真库集成测试唯一约束与回滚。
+
+请人工评审 M0 清单后，若通过请回复：M1 通过，进入 M2
+（未收到前不会开始 M2。）
 ```
 
 **我的决策与踩坑**
 - 决策：`flags` 表用复合唯一索引 `UNIQUE(key, environment)`，确保「同一环境 Key 唯一」落在数据库层。
 - 决策：`history` 表字段含 operation_type / operator / summary / created_at。
-- （补充：迁移工具选 golang-migrate / goose，理由）
 
 **结果验证**
 - 迁移执行成功；手动插入两条同环境同 Key 记录被数据库拒绝。
@@ -249,21 +279,129 @@ M0阶段已完成人工校验，请按以下提示词进行开发：
 
 **我的提问**
 ```text
-（例如：Gin 路由怎么组织、如何把 PostgreSQL unique_violation 翻译成 409、事务怎么写）
+# 角色与上下文
+你是资深 Go + React 全栈工程师。我们正按里程碑开发「Feature Flag 与灰度规则平台」，M0、M1 已通过人工评审。现在只做 M2，不要提前实现 M3（规则评估逻辑）和 M4（前端对接）。
+
+# 当前项目状态（已存在，务必复用，禁止重造）
+- Go 模块名 `featureflag`，go 1.22.12；依赖已有 gin、sqlx、pgx、golang-migrate、testify。
+- `internal/db/db.go` 已提供并直接使用：
+  - `Open(dsn)` / `Ping(ctx)` / `Close()`
+  - `WithTx(ctx, fn)`：BeginTxx + Commit/Rollback 封装，M2 所有「业务变更 + 历史写入」必须放同一 fn 内
+  - `MapUniqueViolation(err)`：把 PostgreSQL 23505 映射为 `ErrFlagKeyConflict` / `ErrRulePriorityConflict`（已定义）
+- `internal/http/handlers.go`：目前 `NewRouter()` 无参数、仅挂 `/healthz`。M2 需改造为 `NewRouter(deps)` 注入 `*db.DB`（或 service）；`cmd/server/main.go` 相应更新调用。
+- `internal/config/config.go`：env `HTTP_ADDR` / `DATABASE_URL` / `MIGRATIONS_PATH`。
+- 迁移（已应用，禁止改动）：
+  - flags：id,name,key,environment,enabled,default_value,created_at,updated_at；UNIQUE(key,environment)；environment CHECK IN ('development','staging','production')
+  - rules：id,flag_id(FK CASCADE),attribute,operator CHECK IN ('equals','in'),expected_value,return_value,priority,created_at,updated_at；UNIQUE(flag_id,priority)
+  - history：id,flag_id(FK SET NULL 可空),operation_type,operator,summary,created_at
+- `internal/model`、`internal/store`、`internal/service` 为空目录，M2 填 model/store/service；`internal/eval` 留空给 M3。
+- 操作者固定 `local-admin`。
+- 本阶段不需要新增迁移；如确需加索引/约束，只能新增 0003 迁移。
+
+# M2 硬约束
+1. 全部走 PostgreSQL 真库；不得用内存 mock 冒充持久化。
+2. 「同环境 Key 唯一」只信任 DB 的 UNIQUE(key,environment)：直接执行写入，捕获 23505 经 `db.MapUniqueViolation` 映射。
+   - `ErrFlagKeyConflict` → HTTP 409
+   - `ErrRulePriorityConflict` → HTTP 400（重复优先级属于输入错误）
+   （若现有代码注释与"优先级→400"语义冲突，一并修正注释保持一致）
+3. 所有写操作（创建/编辑/启停/规则增删改）必须：业务写 + 对应 history 写放在同一个 `WithTx` 事务内，任一失败整体回滚。
+4. 规则优先级策略 = 「拒绝重复」：应用层先校验同 flag 内 priority 已存在则 400，DB UNIQUE 兜底 400。
+5. 优先级方向 = 数字越小优先级越高（升序）；本阶段在代码注释与 README 写明，M3 评估沿用。
+6. 不实现评估逻辑（`/evaluate`、`internal/eval` 留到 M3）；不改前端页面（留到 M4）。
+
+# M2 交付物
+
+## 1. model 包
+定义 `Flag` / `Rule` / `History` 结构体，db tag 与上表列名一一对应，JSON tag 用小驼峰（如 default_value → defaultValue）。
+
+## 2. store 包（数据访问，sqlx）
+- ListFlags(filter)：支持 key 模糊、environment 精确、enabled 过滤。
+- GetFlag(id) / GetFlagByKeyAndEnv(key, env)。
+- CreateFlag / UpdateFlag / SetFlagEnabled。
+- ListRules(flagID) 按 priority 升序；CreateRule / UpdateRule / DeleteRule。
+- ListHistory(flagID) 按 created_at 降序。
+- 写操作接收 `*sqlx.Tx`（供 service 在事务内调用）；查询接收 `sqlx.Ext` 或 `*sqlx.DB`。
+
+## 3. service 包（业务 + 事务编排）
+- CreateFlag：校验 environment 合法、default_value 必填；`WithTx` 内 insert flag + history(CREATE_FLAG)，23505→ErrFlagKeyConflict。
+- UpdateFlag：先确认存在；`WithTx` 内 update + history(UPDATE_FLAG，summary 含变更字段 旧→新)。
+- EnableFlag / DisableFlag：`WithTx` 内 update enabled + history(ENABLE_FLAG/DISABLE_FLAG)。
+- 规则增删改：`WithTx` 内业务写 + history(CREATE_RULE/UPDATE_RULE/DELETE_RULE)；应用层先查 priority 重复返回 ErrRulePriorityConflict，DB 23505 兜底。
+- 资源不存在统一返回一个 `ErrNotFound`（HTTP 层转 404）。
+
+## 4. http 包（路由 + 处理器）
+建议契约（可微调，但必须前后端与 README 一致）：
+- GET    /api/v1/flags                    列表/搜索/筛选
+- POST   /api/v1/flags                    新建（201；409 Key 冲突；400 非法 environment）
+- GET    /api/v1/flags/:id                详情（含按 priority 升序的 rules）
+- PATCH  /api/v1/flags/:id                编辑基本信息 name/default_value（404/409/400）
+- POST   /api/v1/flags/:id/enable         启用
+- POST   /api/v1/flags/:id/disable        停用
+- POST   /api/v1/flags/:flagId/rules      新增规则（400 重复 priority / 非法 operator / priority<0）
+- PATCH  /api/v1/flags/:flagId/rules/:ruleId  编辑规则（同上校验）
+- DELETE /api/v1/flags/:flagId/rules/:ruleId  删除规则（204）
+- GET    /api/v1/flags/:id/history        操作历史（created_at 降序）
+
+统一错误结构：`{"error":{"code":"...","message":"..."}}`；错误码 KEY_CONFLICT(409)/PRIORITY_CONFLICT(400)/NOT_FOUND(404)/INVALID_INPUT(400)。把 db 层 sentinel error 与 HTTP 状态码的映射集中到一个 helper（如 writeError）。
+
+## 5. 测试（M2 重点）
+A. 单元测试：保留现有 MapUniqueViolation 用例；可补充不依赖 DB 的纯逻辑校验。
+B. 集成测试（真 PostgreSQL，Windows 安全，禁止 testcontainers）：
+   - 通过 `TEST_DATABASE_URL` 读测试库；未设置则 `t.Skip("TEST_DATABASE_URL 未设置，跳过集成测试")`。
+   - 测试前对测试库跑迁移（复用 migrateutil 或建独立 schema 后清理）。
+   - 必测用例：
+     ① 同环境重复 Key 创建 → 409，且**没有**对应 history 被写入（同时验证：唯一约束 + 错误映射 + 原子回滚）
+     ② 不同环境同 Key 创建 → 成功
+     ③ 创建 flag 成功后 flags 有记录且 history 有 CREATE_FLAG（验证同事务写入）
+     ④ 同 flag 重复 priority 创建规则 → 400，且无 history 残留（原子回滚 + 优先级拒绝）
+     ⑤ 编辑/启停后 history 记录正确、summary 可读
+     ⑥ 对不存在的 flag 取详情/增删改规则 → 404
+
+# 输出要求
+- 给出新增/修改文件的完整代码与路径，明确 main.go、handlers.go 等哪些被改动。
+- 给出 `go test ./...` 与集成测试跑法（含 Windows 下设置 TEST_DATABASE_URL 的命令）。
+- 说明下一步 M3 做什么，但本阶段不实现评估逻辑。
+- 更新 README 的 M2 状态、API 契约与错误码说明。
+- 全中文；关键语义（优先级方向、错误码映射）务必写进 README。 
 ```
 
 **AI 输出（节选）**
 ```text
-（关键代码节选：错误码映射、事务包裹逻辑）
-```
+Gin 不允许同一前缀混用 :id 和 :flagId，规则路由统一改为 :id。
 
-**我的决策与踩坑**
-- **关键踩坑（示例，真实记录请替换）**：创建 Flag 时先查后插导致并发下偶发 500。
-  - 现象：并发创建同环境同 Key 时偶发报「duplicate key」500。
-  - 定位：应用层「先 SELECT 再 INSERT」存在竞态窗口。
-  - 修正：去掉先查，直接 INSERT，捕获 `pgconn.PgError` 的 `Code == "23505"`，翻译为 409「该环境下 Key 已存在」。
-  - 验证：新增集成测试并发创建 20 次，均返回 409，无 500。
-- 决策：所有「业务变更 + 历史写入」放在同一事务中。
+M2 已交付，停在人工评审
+复用了 M1 的 db.WithTx / MapUniqueViolation，未改迁移、未做评估、未改前端。
+
+评测结果
+go test ./... -count=1
+ok  internal/db
+ok  internal/http     # 含真库集成测试 ①～⑥
+ok  internal/service  # 环境/操作符/priority 校验单测
+TEST_DATABASE_URL 指向 localhost:5433 的 featureflag 库。
+
+关键约定（已写入 README）
+同环境 Key 冲突：DB 23505 → 409 KEY_CONFLICT
+重复 priority：应用层先拒 + DB UNIQUE 兜底 → 400 PRIORITY_CONFLICT
+优先级：数字越小越高（priority ASC）
+写操作与 history 都在同一个 WithTx 里
+规则路径用 :id（Gin 不能混用 :id 和 :flagId）
+改动文件
+新增：internal/model/model.go、internal/store/store.go、internal/service/service.go + 单测
+改造：internal/http/handlers.go（NewRouter(svc)）、cmd/server/main.go
+集成测试：internal/http/api_int_test.go
+文档：README.md
+启动 / 测试
+cd "D:\桌面\陈凯昊项目提交（滴滴）\backend"
+$env:DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
+go run ./cmd/server
+# GET /healthz  /api/v1/flags
+$env:TEST_DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
+go test ./... -count=1
+下一步 M3（本阶段不实现）
+internal/eval 纯函数 + POST /evaluate + 停用短路/优先级/equals/in 单测。
+
+通过后请回复：M2 通过，进入 M3
+```
 
 **结果验证**
 - `go test ./...` 全部通过（含并发与事务回滚用例）。
@@ -274,103 +412,266 @@ M0阶段已完成人工校验，请按以下提示词进行开发：
 
 **我的提问**
 ```text
-（例如：如何实现按优先级短路匹配、equals/in 的语义、属性缺失如何处理）
+# 角色与上下文
+你是资深 Go 全栈工程师。我们按里程碑开发「Feature Flag 与灰度规则平台」，M0/M1/M2 已通过人工评审。现在只做 M3：规则评估。不要提前实现 M4（前端对接），不要动迁移，不要动前端页面。
+
+# 当前项目状态（已存在，务必复用，禁止重造）
+- Go 模块 `featureflag`；依赖 gin/sqlx/pgx/golang-migrate/testify 已装齐。
+- `internal/model`：`Flag`/`Rule`/`History` 结构体已定义，JSON tag 为 camelCase（`defaultValue`/`returnValue`/`expectedValue`/`flagId` 等）。
+- `internal/store`：
+  - `GetFlagByKeyAndEnv(ctx, q, key, env)` → `*model.Flag`，找不到返回 `store.ErrNotFound`
+  - `ListRules(ctx, q, flagID)` → `[]model.Rule`，已按 `priority ASC, id ASC` 排序，空返回空切片
+- `internal/service`：`Service{DB *db.DB}`、`New(database)`、`ErrNotFound`、`ErrInvalidInput`、`ValidEnvironment(env)`、`mapStoreErr(err)`（把 store.ErrNotFound → service.ErrNotFound）。
+- `internal/http`：`NewRouter(svc *service.Service)` 已挂 `/api/v1` 组；`writeError(c, err)` 已集中映射：
+  - `db.ErrFlagKeyConflict`→409 KEY_CONFLICT；`db.ErrRulePriorityConflict`→400 PRIORITY_CONFLICT
+  - `service.ErrNotFound`→404 NOT_FOUND（当前 message 固定"资源不存在"）
+  - `service.ErrInvalidInput`→400 INVALID_INPUT（message=err.Error()）
+  - 其它→500 INTERNAL_ERROR
+- `internal/eval` 目录当前为空，M3 填它。
+- 迁移 0001/0002 已应用且**禁止改动**。`rules.expected_value` 是 TEXT；seed 中 `in` 规则的 expected_value 为 `["pro","enterprise"]`。
+- 前端仍是占位页，M3 **禁止修改**。
+
+# M3 语义锁定（必须严格按此实现，且写进代码注释 + README；这是评卷重点）
+优先级方向沿用 M2：**数字越小优先级越高**；同优先级按 `id ASC` 二级排序（确定性兜底）。
+
+1. **停用短路**：`enabled == false` 时，不评估任何规则，直接返回 `value=false, matched=false, reason="disabled"`。
+2. **有序匹配**：规则按 `priority ASC, id ASC` 逐条判断；第一条命中的规则决定结果，后续不再计算。
+3. **默认值兜底**：没有规则命中 → 返回 `value=flag.default_value, matched=false, reason="default"`。
+4. **equals 语义**：把用户属性值「字符串化」后与 `expected_value` 做**精确相等**比较。
+5. **in 语义**：`expected_value` 是 JSON 数组字符串（如 `["pro","enterprise"]`），解析成 `[]string` 后判断「字符串化的属性值」是否在数组中；**解析失败或空数组 → 该规则视为不命中（跳过，继续下一条）**。
+6. **属性缺失**：规则要求的 `attribute` 不在用户属性中 → 该规则不命中（跳过）。
+7. **类型归一（字符串化规则，前后端/README 一致）**：
+   - string → 原样
+   - number（JSON 解析后是 float64）→ 用 `strconv.FormatFloat(v,'f',-1,64)`（整数不带小数点：123→"123"，123.5→"123.5"）
+   - bool → "true"/"false"
+   - null / 对象 / 数组 → 视为「缺失」，该规则跳过
+8. **结果结构**（评估成功响应）：
+   `{"value":bool, "matched":bool, "matchedRule":Rule|null, "reason":"disabled"|"matched"|"default"}`
+
+# M3 交付物
+
+## 1. internal/eval（纯函数，禁止 import db/store/http，不碰 IO）
+- `type Result struct { Value bool; Matched bool; MatchedRule *model.Rule; Reason string }`
+- `func Evaluate(flag model.Flag, rules []model.Rule, attrs map[string]any) Result`
+  - 入口先处理停用短路；内部**自行**按 `priority ASC, id ASC` 排序（不信任调用方顺序）。
+- 导出两个可单测的辅助函数（或等价实现）：
+  - `Stringify(v any) (string, bool)`：按上面类型归一规则；返回 false 表示「不可比/视为缺失」。
+  - `ParseInValues(expected string) ([]string, bool)`：解析 JSON 数组；失败返回 false。
+
+## 2. internal/service
+- 新增 `ErrFlagNotFound`（如 `errors.New("flag not found")`）。
+- 新增 `func (s *Service) Evaluate(ctx, key, env string, attrs map[string]any) (*eval.Result, error)`：
+  - `strings.TrimSpace(key)` 为空 → `ErrInvalidInput`（key 必填）
+  - `!ValidEnvironment(env)` → `ErrInvalidInput`（environment 非法）
+  - `store.GetFlagByKeyAndEnv` 找不到 → 返回 `ErrFlagNotFound`（不是通用 ErrNotFound）
+  - `store.ListRules` → `eval.Evaluate`，返回结果。
+
+## 3. internal/http
+- 新增路由 `POST /api/v1/evaluate`，handler `Evaluate`。
+- 请求体：
+  `{"key":"...","environment":"...","attributes":{...}}`
+  - `attributes` 类型 `map[string]any`；缺省或为 null → 视为空对象 `{}`。
+  - `attributes` 不是 JSON 对象（字符串/数组）→ 400 INVALID_INPUT，message「attributes 必须是 JSON 对象」。
+  - 请求体整体非法 JSON → 由 `ShouldBindJSON` 失败转 400 INVALID_INPUT（满足题目"JSON 格式错误"反馈）。
+- `writeError` 增加分支：`service.ErrFlagNotFound` → 404 NOT_FOUND，message「Flag 不存在」（评估接口的 404 必须明确到"Flag 不存在"）。
+
+## 4. 测试
+A. **表驱动单测**（`internal/eval/eval_test.go`，纯函数、无 DB）至少覆盖：
+   ① 停用恒 false（即便有会命中 true 的规则）
+   ② 多规则按 priority 首条命中即短路（构造高优先级命中、低优先级也命中的情况，断言返回的是高优先级那条）
+   ③ 无规则命中 → 默认值（分别测 default true / false）
+   ④ equals 命中、不命中
+   ⑤ in 命中、不命中、空数组 `[]`、解析失败（如 expected="not-json"）→ 跳过
+   ⑥ 属性缺失 → 跳过
+   ⑦ 类型归一：`user_id` 数字 123 与 expected "123" 命中；bool true 与 "true" 命中；null/对象/数组 → 跳过
+   ⑧ 同优先级多条 → 按 id ASC 二级排序确定性命中
+B. **Stringify / ParseInValues 单测**：整数不带小数点、小数、bool、null、非法 JSON。
+C. **集成测试**（加到 `internal/http/api_int_test.go`，沿用 `TEST_DATABASE_URL` + `t.Skip` 模式）：
+   - 用 seed 的 `checkout_v2@development`（或用 uniqueKey 新建 flag + 规则）走 `POST /api/v1/evaluate`：
+     ⑨ attributes 命中规则 → matched=true、value 正确、matchedRule 非空
+     ⑩ attributes 不命中任何规则 → matched=false、value=默认值、reason=default
+     ⑪ Flag 不存在 → 404 NOT_FOUND，message「Flag 不存在」
+     ⑫ 非法 environment → 400；attributes 非对象 → 400；请求体非法 JSON → 400
+
+# 输出要求
+- 给出新增/修改文件的完整代码与路径（eval、service、http、测试），明确哪些文件被改动。
+- 说明 `go test ./...`（含 TEST_DATABASE_URL）与「仅单测不连库」的跑法。
+- 更新 README：新增 `/api/v1/evaluate` 契约（请求/响应/错误码）、评估语义（停用短路、优先级方向、equals/in、类型归一、reason 枚举），并把 M3 状态改为「待人工评审」。
+- 更新 `docs/ai-log.md` 的 M3 段落（提示词要求 + 实现要点 + 验证命令）。
+- 全中文；关键语义必须写进代码注释与 README，保证三处一致。
 ```
 
 **AI 输出（节选）**
 ```text
-（评估函数关键逻辑节选）
+M3 已交付，停在人工评审
+未改迁移、未改前端。评估语义按提示词锁定：disabled / matched / default。
+
+评测结果
+go test ./... -count=1
+ok  internal/eval     # ①～⑧ + Stringify/ParseInValues
+ok  internal/http     # ⑨～⑫ 真库 evaluate
+ok  internal/db
+ok  internal/service
+新增 / 修改
+路径	说明
+新增 backend/internal/eval/eval.go
+纯函数 Evaluate / Stringify / ParseInValues
+新增 backend/internal/eval/eval_test.go
+表驱动单测
+改 backend/internal/service/service.go
+ErrFlagNotFound + Evaluate
+改 backend/internal/http/handlers.go
+POST /api/v1/evaluate；404 message「Flag 不存在」
+改 backend/internal/http/api_int_test.go
+命中 / 默认值 / 404 / 400
+改 README、docs/ai-log.md、docs/PHASE_GATES.md
+M3 契约与语义
+评估契约
+POST /api/v1/evaluate
+
+{"key":"checkout_v2","environment":"development","attributes":{"country":"CN"}}
+成功：{"value":bool,"matched":bool,"matchedRule":Rule|null,"reason":"disabled"|"matched"|"default"}
+
+停用：不评估规则，恒 value=false, reason=disabled
+数字越小越先匹配；in 解析失败或 [] 跳过
+number 123 与 "123" 命中（FormatFloat）
+测试命令
+cd backend
+# 仅单测（不要设 TEST_DATABASE_URL，集成测试会 Skip）
+go test ./internal/eval/ ./internal/db/ ./internal/service/ ./internal/http/ -count=1
+$env:TEST_DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
+go test ./... -count=1
+下一步 M4（本阶段不实现）
+四个页面调真实 API，评估控制台展示 value/matched/matchedRule/reason。
+
+通过后请回复：M3 通过，进入 M4
 ```
 
 **我的决策与踩坑**
-- **关键踩坑（示例，真实记录请替换）**：停用 Flag 仍返回了 true。
-  - 现象：`enabled=false` 时命中规则仍返回 true。
-  - 定位：评估函数入口漏了「停用短路」判断。
-  - 修正：入口先判断 `if !flag.Enabled { return false, matched=false, reason="flag disabled" }`。
-  - 验证：新增测试用例「Flag 停用恒返回 false（即便规则会命中 true）」通过。
-- 决策：属性值统一转字符串比较；属性缺失视为「不命中」。
+- 评估 404 单独用 `ErrFlagNotFound`，避免和通用「资源不存在」混在一起。
+- `in` 解析失败或空数组视为跳过，而不是 500。
+- 更早一次 `go test` 因 Postgres 容器未启动失败；拉起 5433 后再跑全绿。
 
 **结果验证**
-- 评估单测覆盖 equals/in、优先级短路、默认值、停用短路、重复优先级、属性缺失，全部通过。
+- `go test ./internal/eval/` 覆盖停用短路、优先级、equals/in、类型归一。
+- `go test ./...`（含 `TEST_DATABASE_URL`）评估集成 ⑨～⑫ 通过。
+- **人工评审：M3 已通过。**
 
 ---
 
-### 阶段 6：前端页面
+### 阶段 6：前端页面（M4）
 
 **我的提问**
 ```text
-（例如：React 表单校验、加载/空状态、如何展示评估结果与命中规则）
+只做 M4：前端对接真实 Go API。禁止修改后端代码、禁止修改迁移。
+Vite proxy /api → :8080；三个占位页重写；AppLayout 去掉（M1）和硬编码 /flags/1。
 ```
 
 **AI 输出（节选）**
 ```text
-（关键组件/状态管理节选）
+文档已按「M0–M3 人工评审通过」对齐，M4 前端也一并收尾。
+
+文档状态
+文件	调整
+README.md
+M0–M3 已通过；M4 待评审；补前端页面、联调与 seed 评估两条链路
+docs/PHASE_GATES.md
+当前停在 M4
+docs/ai-log.md
+M3 改为已通过，补 M4 段落
+docs/ai-development-log.md
+去掉「仍停在 M3」；补真实 M4 / 踩坑，去掉占位 git log
+M4 前端（npm run build 已通过）
+列表 / 详情规则与历史 / 评估控制台，走 /api/v1
+文案与后端一致：数字越小越先匹配、in 用 JSON 数组、停用恒 false
+联调（seed）
+后端 go run ./cmd/server，前端 npm run dev
+评估控制台 Key=checkout_v2、环境=development
+{"country":"CN"} → 命中 true
+{"country":"US","plan":"free"} → 默认 false
+环境改 production → 停用，恒 false
+请人工点一遍后回复：M4 通过。
 ```
 
 **我的决策与踩坑**
-- （例如：表单校验、错误提示展示、评估结果 JSON 展示方式等）
+- 决策：规则 `in` 的 expectedValue 在前端用 `JSON.parse` 校验必须为字符串数组，与后端 TEXT 存 `["pro"]` 对齐，不用逗号分隔（避免值内逗号）。
+- 409/400 文案与后端锁定句对齐：「该环境下 Key 已存在」「同一 Flag 内优先级不可重复」。
 
 **结果验证**
-- 列表页 / 新建编辑页 / 详情与规则管理页 / 评估控制台均可正常操作，错误反馈清晰。
+- `npm run build`（tsc + vite）通过。
+- 联调步骤见 README：seed `checkout_v2@development`，CN 命中 true；US+free 走默认 false。
+- **人工评审：M4 已通过。**
 
 ---
 
-### 阶段 7：测试与收尾
+### 阶段 7：M5 提交前收尾
 
 **我的提问**
 ```text
-（例如：如何写 Go 集成测试、testcontainers 拉 PostgreSQL、README 要写哪些内容）
+只做 M5：对照笔试题目做提交前自查、补文档、整理 git、跑全量验收。
+禁止新增功能、禁止改后端业务逻辑、禁止可选扩展。
+README 补设计取舍 / 已完成 / 未完成 / 已知限制；M3/M4/文档分三次 commit。
 ```
 
 **AI 输出（节选）**
 ```text
-（关键测试代码 / README 结构建议）
+README 增加「设计取舍」「已知限制」独立章节。
+git 拆分：feat(M3) 评估、feat(M4) 前端、docs(M5) 文档。
+全量跑 go build/vet/fmt/test 与 npm run build/lint。
 ```
 
 **我的决策与踩坑**
-- 决策：集成测试用真 PostgreSQL 验证唯一约束与事务原子性。
-- （补充：README 的取舍说明、已知限制、未完成项）
+- 不做百分比灰度等可选扩展，只在「未完成/已知限制」如实列出。
+- 过程文档里仍有早期占位句（如需求分析「AI 输出节选」未贴全文），**不虚构补全**，见文末「需人工补齐清单」。
 
-**结果验证**
-- 单元测试 + 集成测试全绿；`README.md` 按题目要求补全。
+**结果验证**（2026-09-05 本机真跑，非虚构）
+- `gofmt -w` 后 `gofmt -l .` 为空；`go build ./...`、`go vet ./...` 通过。
+- `TEST_DATABASE_URL` 已设：`go test ./... -count=1` → `ok db / eval / http / service`。
+- 未设 `TEST_DATABASE_URL`：http 集成测试 SKIP，不红。
+- `npm run build`、`npm run lint` 通过。
+- git 三次提交后见仓库 `git log --oneline`。
 
 ---
 
 ## 3. 操作日志（旁证）
 
-### git 提交记录（节选）
+### git 提交记录
 
-```text
-（运行 git log --oneline 后粘贴，示例格式）
-a1b2c3d feat: 初始化 Go 后端与 React 前端
-b2c3d4e feat: flags/rules/history 表迁移与复合唯一索引
-c3d4e5f feat: Flag CRUD 与历史同事务写入
-d4e5f6g feat: 规则评估核心逻辑 + 单测
-e5f6g7h fix: 停用短路、Key 冲突 23505→409
-```
+以仓库内 `git log --oneline` 为准（M5 收尾后应能看到 feat(M3)、feat(M4)、docs(M5)）。**不要使用编造的 hash。**
 
 ### 关键命令与测试输出（节选）
 
 ```text
-# 后端测试
-go test ./...
-（粘贴实际输出摘要，如：ok  ... PASS）
+# M5 全量（backend，已设 TEST_DATABASE_URL）
+ok  	featureflag/internal/db	0.357s
+ok  	featureflag/internal/eval	0.344s
+ok  	featureflag/internal/http	2.145s
+ok  	featureflag/internal/service	0.323s
+
+# 未设 TEST_DATABASE_URL
+--- SKIP: TestDuplicateKeySameEnv_409_NoHistory
+    api_int_test.go:85: TEST_DATABASE_URL 未设置，跳过集成测试
+（其余集成用例同样 SKIP；TestHealthz PASS）
 
 # 前端
-npm run dev
-（粘贴启动结果）
-
-# 迁移
-migrate -path migrations -database "$DATABASE_URL" up
-（粘贴执行结果）
+npm run build → tsc -b && vite build  exit 0
+npm run lint  → oxlint  exit 0
 ```
+
+Postgres：Docker Compose，宿主机 **5433**。
 
 ---
 
-## 4. 待补充（开发过程中逐步填充）
+## 4. 阶段状态
 
-- [ ] 阶段 1 我的原始提问
-- [ ] 阶段 3 迁移脚本关键片段
-- [ ] 阶段 4/5 两处「关键踩坑」替换为真实记录
-- [ ] 阶段 7 测试输出
-- [ ] 文末 git log 与命令输出
+- [x] M0–M4 人工评审通过
+- [ ] M5 收尾验收（通过口令：`M5 通过，可提交`）
+- [x] 关键踩坑：Gin `:id`/`:flagId` 冲突；Postgres 未启动导致集成测试失败
+
+## 5. 需人工补齐清单（不代填虚构内容）
+
+以下条目在 `ai-development-log.md` 中仍偏摘要或占位，评卷若要求「原始对话全文」，请人工从 Cursor 聊天记录粘贴，**不要编造**：
+
+- [ ] 阶段 1「AI 输出（节选）」仍是占位句，未贴需求分析全文（全文在当时 Plan 中）
+- [ ] 各阶段完整原始 prompt 可再从聊天导出备份到 `docs/chats/`（当前已有精简版）
+- [x] M5 全量验收命令输出已写入本节「操作日志」（2026-09-05 真跑）

@@ -9,7 +9,7 @@
 ## M0 脚手架 — 已通过
 
 - Go 装到 `D:\Tools\go`；Postgres Compose 映射 **5433**
-- `/healthz` 冒烟通过（M1 将健康检查路径定为 `/healthz`）
+- 健康检查路径定为 `/healthz`
 
 ---
 
@@ -20,31 +20,57 @@
 
 ---
 
-## M2 Flag/规则 CRUD + 历史同事务 — 待评审
+## M2 Flag/规则 CRUD + 历史同事务 — 已通过
+
+- 复用 `db.WithTx` / `MapUniqueViolation`；23505 → Key 409、priority 400
+- 写操作与 history 同事务；真库集成测试 ①～⑥
+- 规则路由统一 `:id`（Gin 不允许混用 `:flagId`）
+
+---
+
+## M3 规则评估 — 已通过
+
+- `internal/eval` 纯函数：停用短路 `disabled`、命中 `matched`、默认 `default`
+- `POST /api/v1/evaluate`；Flag 不存在 404 message「Flag 不存在」
+- `go test ./internal/eval/` 与 http 集成 ⑨～⑫ 通过
+
+---
+
+## M4 前端对接真实 API — 已通过
+
+- 只改前端；相对路径 `/api/v1`；列表 / 详情 / 评估
+- 文案与后端一致：数字越小越先匹配；`in` 为 JSON 字符串数组；停用恒 false
+- `npm run build` 通过
+
+---
+
+## M5 收尾验收
 
 ### 提示词要求
 
-- 复用 M1 的 `db.WithTx` / `MapUniqueViolation`，禁止重造
-- 同环境 Key 唯一只信任 DB 23505 → 409
-- 重复 priority → 400（应用层 + DB 兜底）
-- 所有写操作与 history 同一事务
-- 真 PostgreSQL 集成测试；未设 `TEST_DATABASE_URL` 则 Skip
-- 不实现评估、不改前端
+- 不改业务逻辑、不改迁移、不新增 API、不做可选扩展
+- README 补齐：启动方式、设计取舍、已完成、未完成、已知限制
+- 更新过程文档；把未提交的 M3/M4/文档拆成清晰 git 历史
+- 真跑：`go build/vet/fmt/test`、`npm run build/lint`
 
-### 实现要点
+### 做了什么
 
-- `NewRouter(svc)` 注入 service；`cmd/server/main.go` 已更新
-- 规则路由使用 `:id`（Gin 不允许 `/flags/:id` 与 `/flags/:flagId/rules` 并存）
-- 修正注释：`ErrRulePriorityConflict` 映射 **400** 而非 409
-- 集成测试覆盖题目要求的 ①～⑥，另补非法 environment、规则 CRUD 排序
+- README 增加「设计取舍」「已知限制」独立章节
+- `PHASE_GATES` / `ai-log` 将 M4 标为已通过，M5 为收尾
+- 核对 `ai-development-log.md`：列出仍需人工补齐的项（不虚构）
+- 按路径拆分提交 M3 / M4 / M5
 
-### 验证
+### 验收结果（2026-09-05 本机真跑）
 
-```text
-$env:TEST_DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
-go test ./... -count=1
-```
+- Postgres：`featureflag-pg` 已在跑，`pg_isready` 通过（宿主机 5433）。
+- `gofmt -l .`：初检有 `config.go` / `api_int_test.go` / `service.go` 未对齐；已 `gofmt -w`（仅空白，无业务改动），再检为空。
+- `go build ./...`：通过
+- `go vet ./...`：通过（无警告）
+- 设置 `TEST_DATABASE_URL` 后 `go test ./... -count=1`：`db` / `eval` / `http` / `service` 全绿
+- 不设 `TEST_DATABASE_URL`：`eval`/`db`/`service` 单测 PASS；http 集成测试全部 SKIP（`TEST_DATABASE_URL 未设置`），`TestHealthz` PASS，不红
+- `npm run build`：`tsc -b && vite build` 通过（vite 提示主包 >500kB，无害）
+- `npm run lint`：`oxlint` 通过
 
 ### 待人工确认
 
-回复：`M2 通过，进入 M3`
+回复：`M5 通过，可提交`

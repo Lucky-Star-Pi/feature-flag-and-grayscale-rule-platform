@@ -1,89 +1,21 @@
 # Feature Flag 与灰度规则平台
 
-轻量 Feature Flag 平台（滴滴外包岗笔试题目 A）：React + Go + PostgreSQL。
+轻量 Feature Flag 平台（滴滴外包岗笔试题目 A）：React + Go + PostgreSQL。用于按环境控制功能开关，并按用户属性做有序规则匹配。
 
 ## 开发门禁
-
-**按阶段开发**：每阶段「自动化评测 + 人工评审」通过后，才能进入下一阶段。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | M0 | 脚手架可启动 | **已通过** |
 | M1 | 骨架 + 三表迁移 + DB 工具 + 前端占位 + healthz | **已通过** |
-| **M2** | Flag/规则 CRUD + 历史同事务 + 真库集成测试 | **待人工评审** |
-| M3 | 规则评估纯函数 + `/evaluate` | 未开始（待门禁） |
-| M4 | 前端对接真实 API | 未开始 |
+| M2 | Flag/规则 CRUD + 历史同事务 + 真库集成测试 | **已通过** |
+| M3 | 规则评估纯函数 + `POST /api/v1/evaluate` | **已通过** |
+| M4 | 前端对接真实 Go API | **已通过** |
+| **M5** | 提交前自查、文档与 git 整理、全量验收 | **待人工确认** |
 
-## 已锁定语义（前后端 / README / 代码三处一致）
+## 启动方式
 
-- **优先级方向**：数字越小优先级越高；规则按 `priority ASC, id ASC` 返回。M3 评估将沿用同一顺序。
-- **重复优先级**：拒绝。应用层先查 → `400 PRIORITY_CONFLICT`；DB `UNIQUE(flag_id, priority)` 的 23505 同样映射为 400。
-- **同环境 Key 唯一**：只信任 DB `UNIQUE(key, environment)`。直接 INSERT，捕获 23505 → `409 KEY_CONFLICT`。不同环境允许相同 Key。
-- **历史原子性**：创建/编辑/启停/规则增删改均在 `db.WithTx` 内同时写入业务行与 history；任一失败整体回滚。
-- **操作者**：固定 `local-admin`，不信任请求体。
-- **本阶段不做**：`/evaluate`、`internal/eval`、前端页面改造。
-
-## 技术选型
-
-- HTTP：**Gin**；DB：`sqlx` + `pgx`；迁移：`golang-migrate`
-- 前端：Vite + React + TS（M2 **不改页面**，仍为占位）
-
-## 目录结构
-
-```text
-backend/
-  cmd/server/main.go          # 注入 service，挂 /healthz + /api/v1
-  internal/
-    config/                   # HTTP_ADDR / DATABASE_URL / MIGRATIONS_PATH
-    db/                       # Open / WithTx / MapUniqueViolation
-    model/                    # Flag / Rule / History
-    store/                    # sqlx 数据访问（写操作走 *sqlx.Tx）
-    service/                  # 校验 + WithTx 编排
-    http/                     # 路由、writeError、集成测试
-    migrateutil/
-    eval/                     # 留给 M3
-  migrations/                 # 0001 表结构 + 0002 seed（M2 未改）
-frontend/                     # M1 占位页（M2 未改）
-```
-
-## API 契约（M2）
-
-Base：`/api/v1`。统一错误体：
-
-```json
-{"error":{"code":"KEY_CONFLICT","message":"该环境下 Key 已存在"}}
-```
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/v1/flags` | 列表。查询：`key` 模糊、`environment` 精确、`enabled=true/false` |
-| POST | `/api/v1/flags` | 新建。201。body: name, key, environment, enabled?, defaultValue |
-| GET | `/api/v1/flags/:id` | 详情，含按 priority 升序的 rules |
-| PATCH | `/api/v1/flags/:id` | 编辑 name / defaultValue（不可改 key/environment） |
-| POST | `/api/v1/flags/:id/enable` | 启用 |
-| POST | `/api/v1/flags/:id/disable` | 停用 |
-| POST | `/api/v1/flags/:id/rules` | 新增规则 |
-| PATCH | `/api/v1/flags/:id/rules/:ruleId` | 编辑规则 |
-| DELETE | `/api/v1/flags/:id/rules/:ruleId` | 删除，204 |
-| GET | `/api/v1/flags/:id/history` | 历史，created_at 降序 |
-| GET | `/healthz` | 健康检查 |
-
-错误码：
-
-- `KEY_CONFLICT` → 409（同环境 Key 冲突，来自 23505）
-- `PRIORITY_CONFLICT` → 400（重复优先级，应用层或 23505）
-- `NOT_FOUND` → 404
-- `INVALID_INPUT` → 400（非法 environment / operator / priority<0 / 缺字段）
-
-规则 body 示例：
-
-```json
-{"attribute":"country","operator":"equals","expectedValue":"CN","returnValue":true,"priority":0}
-```
-
-`in` 的 `expectedValue` 本阶段存 TEXT（如 `["pro","enterprise"]`）；匹配语义在 M3。
-
-## 启动命令
+少量分步命令即可本地复现（题面不强制 Docker 一键）：
 
 ```powershell
 $env:PATH = "D:\Tools\go\bin;D:\nodejs;" + $env:PATH
@@ -91,56 +23,123 @@ $env:GOROOT = "D:\Tools\go"
 $env:GOPATH = "D:\Tools\gopath"
 $env:GOPROXY = "https://goproxy.cn,direct"
 
+# 1. Postgres（宿主机端口 5433，避开本机已占用的 5432）
 cd "D:\桌面\陈凯昊项目提交（滴滴）"
 $env:COMPOSE_PROJECT_NAME = "featureflag"
 docker compose -p featureflag up -d
 
+# 2. 后端（启动时自动 migrate + seed）
 cd backend
 $env:DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
 $env:MIGRATIONS_PATH = "file://migrations"
 $env:HTTP_ADDR = ":8080"
 go run ./cmd/server
+
+# 3. 前端（Vite 把 /api 代理到 :8080）
+cd ..\frontend
+npm install
+npm run dev
 ```
 
-验证：`GET http://127.0.0.1:8080/healthz`；`GET http://127.0.0.1:8080/api/v1/flags`
+浏览器打开 Vite 地址（默认 `http://127.0.0.1:5173`）。健康检查：`GET http://127.0.0.1:8080/healthz`。
 
-## 测试命令
+用 seed **`checkout_v2` + `development`** 在评估控制台复现：
 
-未设置 `TEST_DATABASE_URL` 时，集成测试会 Skip；单测仍会跑。
+1. **命中 true**：`{"country":"CN"}`（或 `"plan":"pro"`）→ `value=true`，`reason=matched`
+2. **走默认值**：`{"country":"US","plan":"free"}` → `value=false`，`reason=default`
+3. **停用短路**：同一 Key 换 `production`（seed 停用）→ `value=false`，`reason=disabled`
+
+后端测试：
 
 ```powershell
-cd "D:\桌面\陈凯昊项目提交（滴滴）\backend"
-$env:PATH = "D:\Tools\go\bin;" + $env:PATH
-$env:GOROOT = "D:\Tools\go"
-$env:GOPATH = "D:\Tools\gopath"
-$env:GOPROXY = "https://goproxy.cn,direct"
+cd backend
 $env:TEST_DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
 go test ./... -count=1
 ```
 
-仅单测（不连库）：
+不连库（集成测试 Skip）：不要设置 `TEST_DATABASE_URL`，然后  
+`go test ./internal/eval/ ./internal/db/ ./internal/service/ ./internal/http/ -count=1`
 
-```powershell
-go test ./internal/db/ ./internal/service/ ./internal/http/ -count=1 -short
+## 已锁定语义（代码 / README / 界面三处一致）
+
+- **优先级**：数字越小越高；`priority ASC, id ASC`。
+- **重复优先级**：拒绝 → `400 PRIORITY_CONFLICT`。
+- **同环境 Key 唯一**：DB `UNIQUE(key, environment)`，23505 → `409 KEY_CONFLICT`。
+- **历史**：写操作与 history 同一 `WithTx`；操作者固定 `local-admin`。
+- **评估**：停用 → `reason=disabled` 恒 false；首条命中 → `matched`；否则 `default`。equals 精确字符串化比较；`in` 解析 JSON 字符串数组，失败或 `[]` 跳过；属性缺失 / null / 对象 / 数组跳过。
+
+## 设计取舍
+
+- **Key 唯一只信任 DB**：`UNIQUE(key, environment)`，直接 INSERT，捕获 PostgreSQL `23505`，而不是「先查后插」。两个并发 POST 都会通过应用层检查，只有库约束能拦住。
+- **重复优先级用拒绝，不用二级排序**：策略简单、结果确定；应用层先 400，DB UNIQUE 兜底。列表与评估仍按 `id ASC` 做同分防御排序。
+- **评估做成 `internal/eval` 纯函数**：无 IO，表驱动单测不依赖数据库；service 只负责查 Flag/规则再调用。
+- **`history.flag_id` 为 `ON DELETE SET NULL`**：本题不做删 Flag，但即便误删，历史摘要仍可留存。
+- **`in` 的 expectedValue 存 TEXT JSON 数组**：不单独建成员表，写入/展示简单；前端用 `JSON.parse` 校验必须是字符串数组。
+- **固定操作者 `local-admin`**：题面不要求登录，避免把时间花在无分值鉴权上。
+- **集成测试不用 testcontainers**：`TEST_DATABASE_URL` + 未设置则 `t.Skip`，避免 Windows/评卷机无 Docker 时整套变红。
+- **HTTP 用 Gin、DB 用 sqlx 显式 SQL**：事务边界和 UNIQUE 错误对评卷人可见；不用 GORM 隐藏 SQL。
+- **前端只走相对路径 `/api/v1`**：开发靠 Vite proxy，不写死后端地址。
+
+## 数据模型（摘要）
+
+- `flags`：`UNIQUE(key, environment)`
+- `rules`：`UNIQUE(flag_id, priority)`；`flag_id` CASCADE
+- `history`：`flag_id` 可空 SET NULL；`operation_type` / `operator` / `summary`
+
+## API 契约（摘要）
+
+Base `/api/v1`，错误体 `{"error":{"code","message"}}`。
+
+- Flag：`GET/POST /flags`，`GET/PATCH /flags/:id`，`POST .../enable|disable`
+- 规则：`POST/PATCH/DELETE /flags/:id/rules[/:ruleId]`
+- 历史：`GET /flags/:id/history`
+- 评估：`POST /evaluate` → `{value, matched, matchedRule, reason}`，`reason` ∈ `disabled|matched|default`
+
+错误码：`KEY_CONFLICT` 409、`PRIORITY_CONFLICT` 400、`NOT_FOUND` 404（评估文案「Flag 不存在」）、`INVALID_INPUT` 400。
+
+## 前端页面
+
+- `/` 列表：筛选、新建/编辑、启停、进详情
+- `/flags/:id` 详情：规则 CRUD、操作历史
+- `/evaluate` 评估控制台
+
+## 已完成
+
+- Flag 列表 / 搜索筛选 / 新建 / 编辑 / 启停 / 详情
+- 有序规则增删改；优先级拒绝重复；数字越小越先匹配
+- 在线评估控制台（真实 Go API）；停用短路、命中、默认值、JSON 错误、Flag 不存在反馈
+- 操作历史与业务变更同事务；固定操作者 `local-admin`
+- 数据库迁移 + seed；同环境 Key 唯一落在 DB
+- 评估核心逻辑自动化测试 + 真库集成测试（唯一约束、事务、评估接口）
+- 前端对接真实 API（loading / 空状态 / 错误反馈）
+
+## 未完成
+
+题面可选扩展，**无独立分值，本项目不做**：
+
+- 登录与角色权限
+- 稳定百分比灰度
+- 配置版本 / 回滚 / 乐观锁
+- 规则拖拽排序
+- 环境间配置复制或发布
+- 前端自动化测试或在线部署
+
+## 已知限制
+
+- 无登录/角色权限（题面明确不要求）
+- 列表无分页（演示数据量可接受）
+- 无配置版本/回滚/乐观锁、无百分比灰度、无环境间复制（见未完成）
+- 前端无自动化测试（可选扩展未做）
+- 评估每次实时查库、无缓存（量小可接受）
+- 启动需分步命令 + 本机 Docker 起 Postgres（未做一键 Compose 含前后端；题面不强制 Docker）
+- Postgres 映射 **5433**，因本机 5432 可能已被其它容器占用
+
+## 目录结构
+
+```text
+backend/           Go API、migrations、测试
+frontend/          Vite React，相对路径调 /api/v1
+docker-compose.yml 仅 Postgres
+docs/              AI 过程记录与阶段门禁
+README.md
 ```
-
-（集成测试在 `internal/http` 的 `api_int_test.go`，不看 `-short`，只看环境变量。）
-
-## M2 评测清单（请人工勾选）
-
-- [ ] `go test ./...` 在设置 `TEST_DATABASE_URL` 后全部通过
-- [ ] 同环境重复 Key → 409，且无多余 history
-- [ ] 不同环境同 Key → 201
-- [ ] 创建成功后 flags + history(CREATE_FLAG) 都有
-- [ ] 重复 priority → 400，无 history 残留
-- [ ] 编辑/启停 history 的 summary 可读
-- [ ] 不存在的 flag 详情/规则操作 → 404
-- [ ] 无 `/evaluate`、前端仍为占位页
-
-**通过后请回复：`M2 通过，进入 M3`**
-
-## 下一步 M3（本阶段不实现）
-
-- `internal/eval` 纯函数：停用短路、priority 升序首条命中、默认值兜底、equals/in、属性缺失/类型
-- `POST /api/v1/evaluate`
-- 表驱动单测覆盖核心场景 ①～⑤⑪
