@@ -26,8 +26,7 @@ $env:GOROOT = "D:\Tools\go"
 $env:GOPATH = "D:\Tools\gopath"
 $env:GOPROXY = "https://goproxy.cn,direct"
 
-# 1. Postgres（宿主机端口 5433，避开本机已占用的 5432）
-cd "D:\桌面\陈凯昊项目提交（滴滴）"
+# 1. Postgres（先进入本仓库根目录；宿主机端口 5433，避开本机已占用的 5432）
 $env:COMPOSE_PROJECT_NAME = "featureflag"
 docker compose -p featureflag up -d
 

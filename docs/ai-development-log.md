@@ -402,7 +402,7 @@ TEST_DATABASE_URL 指向 localhost:5433 的 featureflag 库。
 集成测试：internal/http/api_int_test.go
 文档：README.md
 启动 / 测试
-cd "D:\桌面\陈凯昊项目提交（滴滴）\backend"
+cd backend
 $env:DATABASE_URL = "postgres://flaguser:flagpass@localhost:5433/featureflag?sslmode=disable"
 go run ./cmd/server
 # GET /healthz  /api/v1/flags
